@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AquaGo Admin · لوحة المنصة</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../shared/tokens.css">
+<link rel="stylesheet" href="../shared/dashboard.css">
+<link rel="stylesheet" href="platform.css">
+</head>
+<body>
+
+<div class="shell">
+
+  <!-- الشريط الجانبي -->
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="brand-mark"></div>
+      <div class="brand-text">
+        <div class="brand-name">Aqua<span>Go</span></div>
+        <div class="brand-tag">ADMIN</div>
+      </div>
+    </div>
+
+    <nav class="nav" id="nav">
+      <div class="nav-item" data-page="overview">
+        <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><rect x="3.5" y="3.5" width="7" height="7" rx="2"></rect><rect x="13.5" y="3.5" width="7" height="7" rx="2"></rect><rect x="3.5" y="13.5" width="7" height="7" rx="2"></rect><rect x="13.5" y="13.5" width="7" height="7" rx="2"></rect></svg>
+        <span>نظرة عامة</span>
+      </div>
+      <div class="nav-item" data-page="orders">
+        <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><rect x="5" y="3" width="14" height="18" rx="3"></rect><path d="M9 8h6M9 12h6M9 16h3"></path></svg>
+        <span>الطلبات</span>
+        <span class="nav-badge mono">7</span>
+      </div>
+      <div class="nav-item" data-page="drivers">
+        <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><circle cx="12" cy="8" r="3.6"></circle><path d="M5 20c1.2-3.8 3.9-5.4 7-5.4s5.8 1.6 7 5.4"></path></svg>
+        <span>السائقون</span>
+      </div>
+      <div class="nav-item" data-page="stock">
+        <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round"><path d="M12 3l8 4.5v9L12 21l-8-4.5v-9L12 3z"></path><path d="M12 12l8-4.5M12 12v9M12 12L4 7.5"></path></svg>
+        <span>المخزون</span>
+      </div>
+    </nav>
+
+    <div class="sidebar-bottom">
+      <div class="side-card">
+        <div class="live-row">
+          <span class="live-dot"><span class="live-dot-core"></span><span class="live-dot-ripple"></span></span>
+          <div class="live-title">النظام يعمل</div>
+        </div>
+        <div class="live-sub">6 سائقين متصلين · متوسط زمن التوصيل 38 دقيقة</div>
+      </div>
+    </div>
+  </aside>
+
+  <!-- المنطقة الرئيسية -->
+  <div class="main">
+    <header class="topbar">
+      <div class="topbar-title">
+        <div class="page-title" id="pageTitle">نظرة عامة</div>
+        <div class="page-note">عمّان الكبرى · ٨ سبتمبر ٢٠٢٦ · 8:18 ص</div>
+      </div>
+      <div class="topbar-actions">
+        <div class="search-box">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><circle cx="11" cy="11" r="6.5"></circle><path d="M16 16l4 4"></path></svg>
+          <input type="text" placeholder="ابحث برقم الطلب أو الهاتف" aria-label="بحث">
+        </div>
+        <button class="btn-primary" type="button">تقرير اليوم</button>
+        <div class="admin-avatar">م</div>
+      </div>
+    </header>
+
+    <main class="content" id="content"></main>
+  </div>
+</div>
+
+<script src="platform.js"></script>
+</body>
+</html>

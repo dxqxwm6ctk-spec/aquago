@@ -1,0 +1,63 @@
+/* ==========================================================================
+   Aqua Go — رموز التصميم (design tokens)
+   منسوخة حرفيًا عن `assets/aquago-tokens.css` في مشروع Claude Design
+   (Aqua Go Water Delivery). مصدر واحد للحقيقة تشترك فيه لوحات الويب
+   الثلاث: المالك (control) والمنصة (platform) والوكالة (agency).
+   أي تعديل لوني يبدأ من هنا لا من ملف اللوحة.
+   ========================================================================== */
+
+:root {
+  /* brand */
+  --ag-deep: #075985;
+  --ag-aqua: #06B6D4;
+  --ag-teal: #0E7490;
+  --ag-sky: #38BDF8;
+  --ag-sky-300: #7DD3FC;
+  --ag-sky-200: #BAE6FD;
+  --ag-sky-100: #E0F2FE;
+  --ag-sky-050: #F0F9FF;
+
+  /* neutrals */
+  --ag-ink: #0F172A;
+  --ag-surface-dark: #1E293B;
+  --ag-ink-2: #475569;
+  --ag-ink-3: #64748B;
+  --ag-ink-4: #94A3B8;
+  --ag-line-2: #CBD5E1;
+  --ag-line: #E2E8F0;
+  --ag-bg: #F1F5F9;
+  --ag-bg-2: #F8FAFC;
+  --ag-white: #FFFFFF;
+
+  /* status */
+  --ag-ok: #15803D;      --ag-ok-bg: #DCFCE7;
+  --ag-warn: #92400E;    --ag-warn-bg: #FEF3C7;
+  --ag-warn-strong: #B45309;
+  --ag-danger: #B91C1C;  --ag-danger-bg: #FEE2E2;
+  --ag-info: #0E7490;    --ag-info-bg: #CFFAFE;
+
+  /* gradients */
+  --ag-grad-button: linear-gradient(120deg, #075985, #06B6D4);
+  --ag-grad-hero: linear-gradient(130deg, #075985, #0E7490 60%, #06B6D4);
+  --ag-grad-product: linear-gradient(160deg, #F0FBFF, #7DD3FC 62%, #38BDF8);
+  --ag-grad-mark: linear-gradient(140deg, #38BDF8, #06B6D4 55%, #075985);
+
+  /* type */
+  --ag-font-ar: 'IBM Plex Sans Arabic', system-ui, sans-serif;
+  --ag-font-num: 'Space Grotesk', sans-serif;
+
+  /* radii */
+  --ag-r-pill: 999px;
+  --ag-r-card: 26px;
+  --ag-r-md: 20px;
+  --ag-r-btn: 16px;
+  --ag-r-sm: 12px;
+
+  /* space */
+  --ag-s1: 4px; --ag-s2: 8px; --ag-s3: 12px;
+  --ag-s4: 18px; --ag-s5: 24px; --ag-s6: 32px; --ag-s7: 44px;
+
+  /* elevation */
+  --ag-shadow-btn: 0 12px 22px -14px rgba(7, 89, 133, .95);
+  --ag-shadow-card: 0 20px 36px -26px rgba(7, 89, 133, 1);
+}
