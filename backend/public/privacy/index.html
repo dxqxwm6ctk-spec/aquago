@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>سياسة الخصوصية — GasGO</title>
+<!--
+  صفحة إلزامية للمتجرين: App Store يطلب Privacy Policy URL في صفحة التطبيق،
+  وGoogle Play يطلبها في Data safety. تُخدَم ثابتة من backend/public عبر
+  ServeStaticModule (انظر backend/src/app.module.ts)، فرابطها هو عنوان
+  الخادم + /privacy/ — لا تحتاج استضافة منفصلة ولا تسقط مع اللوحات.
+
+  قبل الإرسال للمراجعة: بدّل بريد الدعم أدناه (data-fill="contact") ببريد
+  حقيقي تصله الرسائل — آبل تراسله فعلاً أحياناً للتحقق.
+-->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@300;400;500;600;700&family=Plus+Jakarta+Sans:wght@600;700;800&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --maroon: #A41442; --maroon-dark: #7D0F33; --gold: #E2A82F;
+    --ink: #111B36; --muted: #687188; --line: #E2E5EC; --bg: #F6F7FB;
+    --card: #FFFFFF;
+    --warn-bg: #FFF6F6; --warn-line: #F0C9C9; --warn-fg: #8D2020;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: var(--bg); -webkit-font-smoothing: antialiased; }
+  body {
+    font-family: 'IBM Plex Sans Arabic', 'Segoe UI', Tahoma, sans-serif;
+    color: var(--ink); font-size: 16px; line-height: 1.85;
+  }
+  a { color: var(--maroon); text-decoration: none; }
+  a:hover { color: var(--maroon-dark); text-decoration: underline; }
+
+  /* شريط علوي بهوية GasGO — نفس شريط صفحة التسويق ليقرأ الزائر أنه في
+     الموقع نفسه لا في صفحة معزولة تشبهه مصادفةً */
+  .topbar { background: rgba(255,255,255,.86); backdrop-filter: blur(18px); border-bottom: 1px solid var(--line); position: sticky; top: 0; z-index: 50; }
+  .topbar-in { max-width: 860px; margin: 0 auto; padding: 0 22px; height: 72px; display: flex; align-items: center; gap: 12px; }
+  .brand-word { font: 800 26px 'Plus Jakarta Sans'; letter-spacing: -.04em; color: var(--maroon); direction: ltr; }
+  .topbar-links { margin-inline-start: auto; display: flex; gap: 22px; font-weight: 500; font-size: 15px; }
+  .topbar-links a { color: var(--muted); }
+
+  main { max-width: 860px; margin: 0 auto; padding: 44px 22px 90px; }
+  header { border-bottom: 1px solid var(--line); padding-bottom: 22px; margin-bottom: 30px; }
+  h1 { font-weight: 700; font-size: clamp(26px, 4vw, 36px); line-height: 1.3; margin: 0 0 8px; letter-spacing: -.01em; }
+  h2 { font-weight: 600; font-size: 1.2rem; margin: 38px 0 10px; color: var(--maroon); }
+  h3 { font-weight: 600; font-size: 1.02rem; margin: 24px 0 6px; }
+  p { margin: 10px 0; }
+  .muted { color: var(--muted); font-size: .93rem; }
+  ul { padding-inline-start: 22px; }
+  li { margin: 7px 0; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 18px; padding: 20px 22px; margin: 20px 0; }
+  .warn { background: var(--warn-bg); border: 1px solid var(--warn-line); color: var(--warn-fg); border-radius: 18px; padding: 18px 20px; margin: 16px 0; }
+  table { width: 100%; border-collapse: collapse; margin: 14px 0; font-size: .95rem; }
+  th, td { border: 1px solid var(--line); padding: 10px 12px; text-align: start; vertical-align: top; }
+  th { background: var(--bg); font-weight: 600; }
+  .en { direction: ltr; text-align: left; border-top: 1px solid var(--line); margin-top: 52px; padding-top: 26px; }
+
+  .pagefoot { border-top: 1px solid var(--line); background: #fff; }
+  .pagefoot-in { max-width: 860px; margin: 0 auto; padding: 26px 22px; display: flex; align-items: center; justify-content: space-between; gap: 18px; flex-wrap: wrap; font-size: 14px; color: var(--muted); }
+  .pagefoot-in a { color: var(--muted); }
+
+  @media (max-width: 620px) { .topbar-links { display: none; } }
+</style>
+</head>
+<body>
+<div class="topbar">
+  <div class="topbar-in">
+    <a href="/" style="display:flex; align-items:center; gap:10px">
+      <svg width="34" height="34" viewBox="0 0 120 120" style="overflow:visible" aria-hidden="true">
+        <path d="M60 22 a38 38 0 1 0 34 55" fill="none" stroke="#A41442" stroke-width="17" stroke-linecap="round"/>
+        <path d="M60 60 H97" fill="none" stroke="#A41442" stroke-width="17" stroke-linecap="round"/>
+        <path d="M97 33 c11 10 15 18 15 25 0 9-7 15-15 15 s-15-6-15-15 c0-7 4-15 15-25 z" fill="#E2A82F"/>
+      </svg>
+      <span class="brand-word">Gas<span style="color:var(--gold)">GO</span></span>
+    </a>
+    <div class="topbar-links">
+        <a href="/privacy/" style="color:var(--maroon); font-weight:600">الخصوصية</a>
+        <a href="/terms/">الشروط</a>
+        <a href="/support/">الدعم</a>
+    </div>
+  </div>
+</div>
+
+
+<main>
+  <header>
+    <h1>سياسة الخصوصية — GasGO</h1>
+    <p class="muted">تسري على تطبيق <strong>GasGO</strong> للزبون وتطبيق <strong>GasGO Driver</strong> للمندوب.<br>
+    آخر تحديث: 26 آب 2026</p>
+  </header>
+
+  <p>GasGO منصّة لطلب أسطوانات الغاز وتوصيلها في الأردن. هذه الصفحة تشرح أي بيانات نجمعها، ولماذا، ومع من نشاركها، وكيف تتحكم بها.</p>
+
+  <h2>البيانات التي نجمعها</h2>
+  <table>
+    <tr><th>البيان</th><th>لماذا</th></tr>
+    <tr><td>رقم الهاتف والاسم</td><td>إنشاء الحساب، تسجيل الدخول، ومناداتك عند التوصيل.</td></tr>
+    <tr><td>عناوين التوصيل (الشارع، البناية، الطابق، ملاحظات، إحداثيات الموقع)</td><td>إيصال الطلب إلى بابك واختيار أقرب وكالة.</td></tr>
+    <tr><td>موقع الجهاز</td><td>في تطبيق الزبون: تحديد عنوان التوصيل على الخريطة. في تطبيق المندوب: إظهار موقعه للوكالة وللزبون أثناء توصيل الطلب فقط.</td></tr>
+    <tr><td>سجل الطلبات والفواتير والتقييمات</td><td>متابعة الطلب، الفوترة، وحلّ الخلافات.</td></tr>
+    <tr><td>رسائل الدعم والمحادثة داخل الطلب</td><td>الردّ على استفسارك ومعالجة الشكاوى.</td></tr>
+    <tr><td>معرّف الإشعارات (رمز الجهاز) ونوع نظام التشغيل</td><td>إرسال إشعارات حالة الطلب إلى جهازك.</td></tr>
+    <tr><td>سجلّات تقنية (وقت الدخول، الجهاز الحالي، محاولات فاشلة)</td><td>أمان الحساب ومنع إساءة الاستخدام.</td></tr>
+  </table>
+
+  <div class="card">
+    <strong>الموقع في تطبيق المندوب:</strong> يُقرأ والتطبيق مفتوح أمامك فقط (صلاحية «أثناء الاستخدام»)، ويتوقف تماماً عند إغلاق التطبيق أو إنهاء المناوبة. لا نتتبّع المندوب في وقته الخاص.
+  </div>
+
+  <h2>ما لا نجمعه</h2>
+  <ul>
+    <li>لا نطلب ولا نخزّن أرقام بطاقات مصرفية — الدفع نقداً عند التسليم أو عبر ترتيبات الوكالة.</li>
+    <li>لا نقرأ جهات الاتصال ولا الرسائل ولا الصور خارج ما ترفعه أنت بنفسك.</li>
+    <li>لا نبيع بياناتك ولا نؤجّرها لأي جهة، ولا نستعملها للإعلانات.</li>
+  </ul>
+
+  <h2>مع من تُشارَك</h2>
+  <ul>
+    <li><strong>الوكالة والمندوب المكلَّف بطلبك:</strong> اسمك، رقمك، وعنوان التوصيل — بالقدر اللازم لإيصال الطلب.</li>
+    <li><strong>الزبون صاحب الطلب:</strong> اسم المندوب الأول وموقعه أثناء التوصيل فقط.</li>
+    <li><strong>مزوّدو الخدمة التقنية:</strong> استضافة الخادم وقاعدة البيانات، وFirebase Cloud Messaging لإرسال الإشعارات. يعالجون البيانات نيابةً عنّا ولا يملكون استعمالها لأنفسهم.</li>
+    <li><strong>الجهات الرسمية:</strong> فقط عند طلب قانوني مُلزِم.</li>
+  </ul>
+
+  <h2>مدّة الحفظ</h2>
+  <p>نحتفظ ببيانات الحساب ما دام الحساب قائماً. سجلّات الطلبات والفواتير تُحفَظ للمدّة التي تفرضها المتطلبات المحاسبية، ثم تُنظَّف دورياً. رموز الإشعارات تُحذف مع الجهاز عند تسجيل الخروج منه.</p>
+
+  <h2>حقوقك</h2>
+  <ul>
+    <li><strong>الاطّلاع والتصحيح:</strong> بياناتك ظاهرة داخل التطبيق ويمكنك تعديل الاسم والعناوين.</li>
+    <li><strong>حذف الحساب:</strong> من داخل التطبيق مباشرةً — <em>الحساب ← حذف الحساب</em>. يُحذف اسمك ورقمك وعناوينك المحفوظة ورموز إشعاراتك فوراً. إن لم يكن لحسابك أي طلب سابق يُمحى الحساب بالكامل؛ وإن كانت له طلبات، تبقى سجلّاتها المالية لدى الوكالة بالقدر الذي يوجبه القانون منزوعةً عن هويتك. يمكنك أيضاً مراسلتنا على بريد الدعم أدناه من رقمك المسجَّل.</li>
+    <li><strong>سحب الإذن:</strong> يمكنك إيقاف صلاحية الموقع أو الإشعارات من إعدادات نظام هاتفك في أي وقت — يتعطّل ما يعتمد عليها فقط.</li>
+  </ul>
+
+  <h2>حماية البيانات</h2>
+  <p>كل الاتصال بين التطبيق والخادم يجري عبر HTTPS. كلمات المرور تُخزَّن مُجزَّأة (scrypt) لا كنصّ. الدخول من جهاز جديد ينهي جلسة الجهاز السابق، ويمكن سحب صلاحية أي جهاز من إدارة المنصّة.</p>
+
+  <h2>الأطفال</h2>
+  <p>الخدمة موجَّهة لمن أتمّ الثامنة عشرة. لا نجمع عن قصد بيانات ممّن هم دون ذلك.</p>
+
+  <h2>تغييرات هذه السياسة</h2>
+  <p>عند أي تعديل جوهري نحدّث تاريخ «آخر تحديث» أعلاه، ونطلب موافقتك من جديد داخل التطبيق إن كان التعديل يمسّ ما وافقت عليه.</p>
+
+  <h2>التواصل</h2>
+  <p data-fill="contact">للاستفسار أو لطلب حذف الحساب: <strong><a href="mailto:tarqywsf734@gmail.com">tarqywsf734@gmail.com</a></strong></p>
+
+  <p class="muted">راجع أيضاً <a href="/terms/">شروط الاستخدام</a>.</p>
+
+  <section class="en" lang="en" dir="ltr">
+    <h2>Privacy Policy (English summary)</h2>
+    <p>GasGO is a gas-cylinder ordering and delivery service in Jordan, with two apps: <strong>GasGO</strong> (customer) and <strong>GasGO Driver</strong>.</p>
+    <ul>
+      <li><strong>What we collect:</strong> phone number and name, delivery addresses with coordinates, device location, order and invoice history, ratings, support and in-order messages, push notification token and platform, and basic security logs (last login, active device).</li>
+      <li><strong>Location:</strong> the customer app uses location to pin a delivery address. The driver app reads location only while the app is in the foreground ("When In Use") and only to show the driver's position to the agency and the customer during an active delivery. There is no background tracking.</li>
+      <li><strong>Payments:</strong> we never collect or store card data. Payment is cash on delivery or arranged with the agency.</li>
+      <li><strong>Sharing:</strong> with the agency and driver assigned to your order, with the customer (driver first name and live position during delivery), and with our technical processors (server/database hosting and Firebase Cloud Messaging for push). We do not sell or rent personal data and do not use it for advertising.</li>
+      <li><strong>Retention:</strong> account data is kept while the account exists; order and invoice records are kept as long as accounting requirements demand, then purged.</li>
+      <li><strong>Your rights:</strong> view and correct your data in the app; delete your account from inside the app (<em>Account → Delete account</em>) — name, phone number, saved addresses and push tokens are removed immediately, and an account with no order history is erased entirely. Financial records of completed orders are retained where legally required, de-identified. You may also email support from your registered number.</li>
+      <li><strong>Security:</strong> all traffic over HTTPS; passwords stored hashed (scrypt); signing in from a new device ends the previous device session.</li>
+      <li><strong>Children:</strong> the service is intended for users 18 or older.</li>
+    </ul>
+    <p>Contact: <strong><a href="mailto:tarqywsf734@gmail.com">tarqywsf734@gmail.com</a></strong></p>
+  </section>
+</main>
+
+<div class="pagefoot">
+  <div class="pagefoot-in">
+    <div>© 2026 GasGO</div>
+    <div style="display:flex; gap:20px">
+      <a href="/">الرئيسية</a>
+      <a href="/privacy/">الخصوصية</a>
+      <a href="/terms/">الشروط</a>
+      <a href="/support/">الدعم</a>
+    </div>
+  </div>
+</div>
+</body>
+</html>

@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AquaGo · لوحات الإدارة</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="shared/tokens.css">
+<link rel="stylesheet" href="shared/dashboard.css">
+<style>
+  body { display: grid; place-items: center; min-height: 100vh; padding: 40px 20px; }
+  .picker { width: 100%; max-width: 760px; display: flex; flex-direction: column; gap: 26px; }
+  .picker-head { display: flex; align-items: center; gap: 14px; }
+  .picker-head .brand-name { font-size: 24px; }
+  .picker-title { font-size: 15px; color: var(--ag-ink-3); }
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 18px; }
+  .pick {
+    background: #fff; border: 1px solid var(--ag-line); border-radius: var(--ag-r-card);
+    padding: 24px; display: flex; flex-direction: column; gap: 10px;
+    text-decoration: none; color: inherit; transition: border-color .15s, transform .15s;
+  }
+  .pick:hover { border-color: var(--ag-aqua); transform: translateY(-2px); color: inherit; }
+  .pick .tag {
+    font-family: var(--ag-font-num); font-size: 11px; letter-spacing: .12em; color: var(--ag-aqua);
+  }
+  .pick b { font-size: 17px; font-weight: 700; }
+  .pick small { font-size: 12.5px; color: var(--ag-ink-3); line-height: 1.7; }
+  .note { font-size: 12.5px; color: var(--ag-ink-4); line-height: 1.8; }
+  /* المقاطع اللاتينية تُعزل كي لا تُزحزح علامة "?" إلى آخر النص. */
+  .note .mono { direction: ltr; unicode-bidi: isolate; white-space: nowrap; }
+</style>
+</head>
+<body>
+
+<div class="picker">
+  <div class="picker-head">
+    <div class="brand-mark"></div>
+    <div>
+      <div class="brand-name" style="color:var(--ag-ink)">Aqua<span>Go</span></div>
+      <div class="picker-title">لوحات الإدارة</div>
+    </div>
+  </div>
+
+  <div class="cards">
+    <a class="pick" href="control/index.html">
+      <span class="tag">CONTROL · OWNER</span>
+      <b>لوحة المالك</b>
+      <small>المؤشّرات التنفيذية، المديرون والصلاحيات، التسعير، التحكم بالمنصة، وسجل التغييرات.</small>
+    </a>
+
+    <a class="pick" href="platform/index.html">
+      <span class="tag">ADMIN</span>
+      <b>لوحة المنصة</b>
+      <small>العمليات اليومية: الطلبات الحيّة، أسطول السائقين، والمخزون — على مستوى المدينة كاملة.</small>
+    </a>
+
+    <a class="pick" href="platform/index.html?mode=agency">
+      <span class="tag">AGENCY</span>
+      <b>لوحة الوكالة</b>
+      <small>نفس شاشات المنصة بنطاق الوكالة: طلباتها ومناطقها وسائقوها ومستودعها وحدها.</small>
+    </a>
+  </div>
+
+  <div class="note">
+    لوحة الوكالة والمنصة ملفّ واحد بوضعين (<span class="mono">?mode=agency</span>) — الشاشات
+    نفسها والنطاق يختلف. عند الربط بالخادم يتحدّد الوضع من دور المستخدم بعد التحقّق لا من
+    الرابط؛ إخفاء عنصر في الواجهة ليس أمنًا، والصلاحية تُفحص في الخادم دائمًا.
+  </div>
+</div>
+
+</body>
+</html>

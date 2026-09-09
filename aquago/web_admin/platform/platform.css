@@ -1,0 +1,259 @@
+/* ==========================================================================
+   لوحة AquaGo Admin (المنصة) — ما يخصّها وحدها فقط.
+   الهيكل العام والألوان في ../shared/dashboard.css و../shared/tokens.css.
+   ========================================================================== */
+
+/* ---------- الشريط الجانبي: شارة عدد الطلبات النشطة ---------- */
+
+.nav-badge {
+  margin-right: auto;
+  background: var(--ag-aqua);
+  color: #062434;
+  font-size: 11.5px;
+  font-weight: 700;
+  padding: 2px 9px;
+  border-radius: var(--ag-r-pill);
+}
+
+/* ---------- الشريط العلوي: البحث وأفاتار المشرف ---------- */
+
+.search-box {
+  height: 44px;
+  min-width: 220px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 0 14px;
+  background: var(--ag-bg-2);
+  border: 1px solid var(--ag-line);
+  border-radius: 14px;
+  color: var(--ag-ink-3);
+}
+.search-box input {
+  border: none;
+  background: transparent;
+  outline: none;
+  font-family: var(--ag-font-ar);
+  font-size: 13px;
+  color: var(--ag-ink);
+  width: 100%;
+}
+.search-box input::placeholder { color: var(--ag-ink-3); }
+
+.admin-avatar {
+  width: 44px; height: 44px;
+  border-radius: 14px;
+  background: var(--ag-sky-100);
+  color: var(--ag-deep);
+  font-weight: 700;
+  display: flex; align-items: center; justify-content: center;
+  flex: none;
+}
+
+/* ---------- نظرة عامة: بطاقات المؤشّرات ---------- */
+
+.kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 18px; }
+
+.kpi-card {
+  background: #fff; border: 1px solid var(--ag-line);
+  border-radius: 24px; padding: 22px;
+  display: flex; flex-direction: column; gap: 8px;
+}
+.kpi-label { font-size: 13px; color: var(--ag-ink-3); }
+.kpi-value {
+  font-family: var(--ag-font-num);
+  font-size: 32px; font-weight: 700; letter-spacing: -.02em;
+}
+.kpi-value .unit {
+  font-family: var(--ag-font-ar);
+  font-size: 15px; font-weight: 400; color: var(--ag-ink-3);
+  margin-right: 6px;
+}
+.kpi-delta { font-size: 12.5px; font-weight: 600; }
+.kpi-delta.up   { color: var(--ag-ok); }
+.kpi-delta.warn { color: var(--ag-warn-strong); }
+
+.kpi-card.accent {
+  background: var(--ag-grad-hero);
+  border: none;
+  box-shadow: var(--ag-shadow-card);
+}
+.kpi-card.accent .kpi-label { color: var(--ag-sky-200); }
+.kpi-card.accent .kpi-value { color: #fff; }
+.kpi-pill {
+  align-self: flex-start;
+  background: rgba(3, 42, 62, .5);
+  color: var(--ag-sky-050);
+  font-size: 12.5px; font-weight: 600;
+  padding: 5px 11px; border-radius: var(--ag-r-pill);
+}
+
+/* ---------- الرسم البياني الأسبوعي ---------- */
+
+.panel-head {
+  display: flex; align-items: center; justify-content: space-between;
+  flex-wrap: wrap; gap: 10px;
+}
+.range-toggle { display: flex; gap: 6px; }
+.range-pill {
+  font-size: 12.5px; font-weight: 600;
+  padding: 7px 14px; border-radius: var(--ag-r-pill);
+  background: var(--ag-bg); color: var(--ag-ink-2);
+  cursor: pointer; border: none; font-family: var(--ag-font-ar);
+}
+.range-pill.active { background: var(--ag-deep); color: #fff; }
+
+.bars { display: flex; gap: 10px; align-items: flex-end; height: 190px; }
+.bar-col {
+  flex: 1; display: flex; flex-direction: column;
+  justify-content: flex-end; align-items: center; gap: 8px; height: 100%;
+}
+.bar-fill { width: 100%; border-radius: 10px 10px 0 0; }
+.bar-label { font-size: 12px; color: var(--ag-ink-3); }
+.bar-label.peak { color: var(--ag-ink); font-weight: 600; }
+
+/* ---------- خريطة الأسطول ---------- */
+
+.map-box {
+  flex: 1; min-height: 190px;
+  border-radius: var(--ag-r-md);
+  background: var(--ag-sky-100);
+  background-image: repeating-linear-gradient(135deg,
+    rgba(7, 89, 133, .07) 0 8px, rgba(7, 89, 133, .02) 8px 16px);
+  border: 1px solid var(--ag-sky-200);
+  display: flex; align-items: center; justify-content: center;
+}
+.map-caption {
+  font-family: var(--ag-font-num);
+  font-size: 11.5px; letter-spacing: .06em; color: var(--ag-teal);
+}
+
+.legend { display: flex; flex-wrap: wrap; gap: 16px; font-size: 12.5px; color: var(--ag-ink-2); }
+.legend-item { display: flex; align-items: center; gap: 7px; }
+.legend-dot { width: 10px; height: 10px; border-radius: 50%; flex: none; }
+
+/* ---------- أعلى المناطق ---------- */
+
+.area-row { display: flex; flex-direction: column; gap: 7px; }
+.area-head { display: flex; justify-content: space-between; font-size: 13.5px; }
+.area-head .count { font-family: var(--ag-font-num); color: var(--ag-ink-3); }
+
+/* ---------- توزيع المنتجات ---------- */
+
+.product-row { display: flex; align-items: center; gap: 12px; }
+.product-swatch { width: 44px; height: 52px; border-radius: 14px; flex: none; }
+.product-main { flex: 1; display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.product-main b { font-size: 13.5px; font-weight: 600; }
+.product-main small { font-size: 12.5px; color: var(--ag-ink-3); }
+.product-count { font-family: var(--ag-font-num); font-size: 16px; font-weight: 700; }
+
+/* ---------- التنبيهات التشغيلية ---------- */
+
+.alert {
+  border-radius: 18px; padding: 14px;
+  display: flex; flex-direction: column; gap: 4px;
+}
+.alert b { font-size: 13.5px; font-weight: 700; }
+.alert span { font-size: 12.5px; }
+.alert-warn     { background: var(--ag-warn-bg);   border: 1px solid #FDE68A; color: var(--ag-warn); }
+.alert-critical { background: var(--ag-danger-bg); border: 1px solid #FECACA; color: #991B1B; }
+.alert-info     { background: var(--ag-sky-050);   border: 1px solid var(--ag-sky-200); color: var(--ag-teal); }
+
+/* ---------- الطلبات: الفلاتر والجدول ---------- */
+
+.filter-row { display: flex; flex-wrap: wrap; gap: 10px; }
+.filter-pill {
+  cursor: pointer;
+  font-family: var(--ag-font-ar);
+  font-size: 13px; font-weight: 600;
+  padding: 10px 20px; border-radius: var(--ag-r-pill);
+  background: #fff; color: var(--ag-ink-2);
+  border: 1px solid var(--ag-line);
+}
+.filter-pill.active { background: var(--ag-deep); color: #fff; border-color: var(--ag-deep); }
+
+.orders-head, .orders-row { grid-template-columns: 1.1fr 1.4fr 1.6fr 1.3fr 1fr 1fr; }
+
+.cell-stack { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.cell-stack b { font-size: 13.5px; font-weight: 600; }
+.cell-stack small { font-size: 12.5px; color: var(--ag-ink-3); }
+.cell-stack small.mono { font-family: var(--ag-font-num); }
+
+/* أرقام الهواتف واللوحات تُعزل اتجاهيًا: مقاطعها المفصولة بمسافة أو
+   شَرطة تُقلَب داخل سياق RTL فيظهر "6635 041 079" بدل "079 041 6635".
+   `unicode-bidi:isolate` مع `direction:ltr` يرتّب الرقم داخليًا دون
+   أن يزحزح موضعه ضمن النص العربي المحيط (كما في "بيك أب 43-2718").
+   ملاحظة: العزل يجعل الرقم كتلة LTR، فيبدأ من يسار المساحة المتاحة —
+   لذا يُضبط `text-align:right` على العنصر الحاوي (لا على الرقم) كي
+   يبقى ملتصقًا بحافة القراءة اليمنى تحت الاسم مباشرة. */
+.ltr-num {
+  direction: ltr;
+  unicode-bidi: isolate;
+  white-space: nowrap; /* لئلا تنكسر "51-3390" على سطرين في بطاقة ضيقة */
+}
+small.ltr-num { display: block; text-align: right; }
+
+.table-foot {
+  display: flex; align-items: center; justify-content: space-between;
+  flex-wrap: wrap; gap: 12px;
+}
+.foot-note { font-size: 12.5px; color: var(--ag-ink-3); }
+.pager { display: flex; gap: 8px; }
+.pager-box {
+  width: 38px; height: 38px; border-radius: var(--ag-r-sm);
+  display: flex; align-items: center; justify-content: center;
+  border: 1px solid var(--ag-line); color: var(--ag-ink-2);
+  background: #fff; cursor: pointer; font-family: var(--ag-font-num); font-size: 13px;
+}
+.pager-box.active { background: var(--ag-deep); color: #fff; border-color: var(--ag-deep); }
+
+/* ---------- السائقون ---------- */
+
+.driver-card {
+  background: #fff; border: 1px solid var(--ag-line);
+  border-radius: var(--ag-r-card); padding: 22px;
+  display: flex; flex-direction: column; gap: 16px;
+}
+.driver-head { display: flex; align-items: center; gap: 12px; }
+.driver-avatar {
+  width: 52px; height: 52px; border-radius: 18px;
+  display: flex; align-items: center; justify-content: center;
+  font-weight: 700; font-size: 18px; flex: none;
+}
+.driver-id { flex: 1; display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.driver-id b { font-size: 14px; font-weight: 700; }
+.driver-id small { font-family: var(--ag-font-num); font-size: 12.5px; color: var(--ag-ink-3); }
+.driver-stats {
+  display: flex; justify-content: space-between; gap: 10px;
+  font-size: 12.5px; color: var(--ag-ink-2); flex-wrap: wrap;
+}
+.driver-stats .mono { font-weight: 600; color: var(--ag-ink); }
+
+/* ---------- المخزون ---------- */
+
+.stock-row { display: flex; flex-direction: column; gap: 7px; }
+.stock-head { display: flex; justify-content: space-between; font-size: 13.5px; }
+.stock-head .value { font-family: var(--ag-font-num); font-weight: 600; }
+.stock-head .value.low { color: var(--ag-warn-strong); }
+.stock-track { height: 10px; border-radius: 99px; background: var(--ag-bg); overflow: hidden; }
+.stock-fill { height: 100%; background: linear-gradient(90deg, var(--ag-deep), var(--ag-aqua)); }
+.stock-fill.low { background: #F59E0B; }
+
+.btn-refill {
+  height: 48px; border-radius: var(--ag-r-btn);
+  background: var(--ag-grad-button); color: #fff;
+  font-family: var(--ag-font-ar); font-size: 14px; font-weight: 700;
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer; border: none; width: 100%;
+}
+
+.cycle-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.cycle-tile {
+  background: var(--ag-bg-2); border: 1px solid var(--ag-line);
+  border-radius: var(--ag-r-md); padding: 18px;
+  display: flex; flex-direction: column; gap: 6px;
+}
+.cycle-tile .label { font-size: 12.5px; color: var(--ag-ink-3); }
+.cycle-tile .value { font-family: var(--ag-font-num); font-size: 26px; font-weight: 700; }
+.cycle-tile .value.bad { color: var(--ag-danger); }
+.cycle-note { font-size: 12.5px; color: var(--ag-ink-3); line-height: 1.8; }

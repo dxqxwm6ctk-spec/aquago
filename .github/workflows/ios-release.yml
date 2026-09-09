@@ -1,0 +1,627 @@
+# ==========================================================================
+# AquaGo — بناء iOS موقّع ورفعه إلى TestFlight
+#
+# هذا المسار يتطلّب اشتراك Apple Developer المدفوع. مقابله: نسخة تعيش سنة
+# لا سبعة أيام، وتصلها الإشعارات، وتُوزَّع على المختبرين بلا كيبل.
+#
+# كل فحص هنا مكتوب من عطل وقع فعلًا وكلّف وقتًا — السبب مشروح عند كل واحد
+# بحيث لا يحذفه أحد لاحقًا ظنًّا أنه زائد.
+#
+# الملفات المرتبطة (من يقرأ واحدًا يحتاج أن يعرف عن البقية):
+#   .github/workflows/ios-build.yml   (نسخة sideload بلا اشتراك ولا إشعارات)
+#   tools/ios-signing-secrets.sh      (يفحص الشهادات ويولّد قيم الأسرار)
+#   ios_signing/README.md             (شرح كل ملف والخطوات المتبقية عند آبل)
+# ==========================================================================
+
+name: iOS — نسخة موقّعة (TestFlight)
+
+on:
+  workflow_dispatch:
+    inputs:
+      app:
+        description: "التطبيق المطلوب"
+        type: choice
+        required: true
+        default: both
+        options:
+          - customer_app
+          - driver_app
+          - both
+      upload:
+        description: "الرفع إلى TestFlight (أطفئه للبناء والفحص فقط)"
+        type: boolean
+        required: true
+        default: true
+      api_url:
+        description: "عنوان الخادم (فارغ = خادم الإنتاج)"
+        type: string
+        required: false
+        default: ""
+      build_number:
+        description: "رقم البناء (فارغ = يتولّد من التاريخ والوقت)"
+        type: string
+        required: false
+        default: ""
+
+jobs:
+  choose:
+    name: تحديد التطبيقات
+    runs-on: ubuntu-latest
+    outputs:
+      apps: ${{ steps.pick.outputs.apps }}
+    steps:
+      - id: pick
+        env:
+          APP_INPUT: ${{ inputs.app }}
+        run: |
+          set -euo pipefail
+          if [ "$APP_INPUT" = "both" ]; then
+            APPS='["customer_app","driver_app"]'
+          else
+            APPS="$(printf '%s' "$APP_INPUT" | jq -R -c '[.]')"
+          fi
+          echo "apps=$APPS" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: بناء ورفع ${{ matrix.app }}
+    needs: choose
+    runs-on: macos-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        app: ${{ fromJson(needs.choose.outputs.apps) }}
+
+    env:
+      # سلسلة مفاتيح مؤقتة خاصة بهذا التشغيل — لا نلمس سلسلة النظام.
+      KEYCHAIN_PATH: ${{ runner.temp }}/aquago-signing.keychain-db
+      PROFILES_DIR: ${{ github.workspace }}/.profiles
+
+    steps:
+      # ==================================================================
+      # ١) الأسرار أولًا — قبل أي بناء
+      # ==================================================================
+      - name: التأكد من وجود الأسرار
+        env:
+          IOS_CERT_P12_BASE64: ${{ secrets.IOS_CERT_P12_BASE64 }}
+          IOS_CERT_PASSWORD: ${{ secrets.IOS_CERT_PASSWORD }}
+          IOS_TEAM_ID: ${{ secrets.IOS_TEAM_ID }}
+          PROFILE_CUSTOMER: ${{ secrets.IOS_PROFILE_CUSTOMER_BASE64 }}
+          PROFILE_DRIVER: ${{ secrets.IOS_PROFILE_DRIVER_BASE64 }}
+          APPSTORE_KEY_ID: ${{ secrets.APPSTORE_KEY_ID }}
+          APPSTORE_ISSUER_ID: ${{ secrets.APPSTORE_ISSUER_ID }}
+          APPSTORE_PRIVATE_KEY: ${{ secrets.APPSTORE_PRIVATE_KEY }}
+          APP: ${{ matrix.app }}
+          DO_UPLOAD: ${{ inputs.upload }}
+        run: |
+          set -uo pipefail
+          # الفحص أول خطوة عن قصد: اكتشاف سرّ ناقص بعد عشر دقائق بناء يعني
+          # عشر دقائق ضائعة من رانر macOS مقابل خطأ كان يظهر في ثانيتين.
+          MISSING=()
+          [ -n "$IOS_CERT_P12_BASE64" ] || MISSING+=("IOS_CERT_P12_BASE64")
+          [ -n "$IOS_CERT_PASSWORD" ]   || MISSING+=("IOS_CERT_PASSWORD")
+          [ -n "$IOS_TEAM_ID" ]         || MISSING+=("IOS_TEAM_ID")
+
+          # بروفايل لكل تطبيق: معرّفا الحزمة مختلفان
+          # (jo.aquago.customerApp و jo.aquago.driverApp) وكل بروفايل مربوط
+          # بمعرّف حزمة واحد، فبروفايل واحد لا يغطّي الاثنين مهما حاولت.
+          if [ "$APP" = "customer_app" ]; then
+            [ -n "$PROFILE_CUSTOMER" ] || MISSING+=("IOS_PROFILE_CUSTOMER_BASE64")
+          else
+            [ -n "$PROFILE_DRIVER" ]   || MISSING+=("IOS_PROFILE_DRIVER_BASE64")
+          fi
+
+          if [ "$DO_UPLOAD" = "true" ]; then
+            [ -n "$APPSTORE_KEY_ID" ]     || MISSING+=("APPSTORE_KEY_ID")
+            [ -n "$APPSTORE_ISSUER_ID" ]  || MISSING+=("APPSTORE_ISSUER_ID")
+            [ -n "$APPSTORE_PRIVATE_KEY" ]|| MISSING+=("APPSTORE_PRIVATE_KEY")
+          fi
+
+          if [ ${#MISSING[@]} -gt 0 ]; then
+            echo "::error::أسرار ناقصة: ${MISSING[*]}"
+            echo ""
+            echo "أضِفها من: Settings ← Secrets and variables ← Actions ← New repository secret"
+            echo "قيمها كلها يولّدها ويفحصها: tools/ios-signing-secrets.sh"
+            echo "وشرح مصدر كل ملف في: ios_signing/README.md"
+            exit 1
+          fi
+          echo "✅ كل الأسرار المطلوبة موجودة."
+
+      - name: سحب المستودع
+        uses: actions/checkout@v4
+
+      # ==================================================================
+      # ٢) بوابات فحص الكود — قبل البناء، لا بعده
+      # ==================================================================
+      - name: بوابة — مفاتيح وضع التطوير مطفأة
+        working-directory: ${{ matrix.app }}
+        run: |
+          set -uo pipefail
+          # نسخة App Store لا تحتمل أن يصلها مفتاح تجاوز مصادقة: مراجع آبل
+          # قد يرفضها، والأسوأ أن يصل زر "دخول بدون تحقق" ليد مستخدم حقيقي.
+          # الفحص يبحث عن الإسناد المفعَّل صراحةً (= true) لا عن ذكر الاسم،
+          # حتى لا يفشل البناء لمجرد وجود ثابت مطفأ أو تعليق يشرحه.
+          FOUND=0
+          if [ -d lib ]; then
+            HITS="$(grep -rnE \
+              '(kDevMode|devMode|DEV_MODE|debugLogin|skipAuth|skipLogin|bypassAuth|demoMode|testMode)[[:space:]]*=[[:space:]]*true' \
+              --include='*.dart' lib || true)"
+            if [ -n "$HITS" ]; then
+              FOUND=1
+              echo "::error::وضع التطوير مفعَّل في الكود:"
+              echo "$HITS"
+            fi
+
+            # القيمة الافتراضية لـbool.fromEnvironment: لو كُتبت true صارت
+            # هي السارية في نسخة الإنتاج لأن البناء لا يمرّر dart-define مضادًّا.
+            HITS2="$(grep -rnE \
+              'bool\.fromEnvironment\([^)]*defaultValue:[[:space:]]*true' \
+              --include='*.dart' lib || true)"
+            if [ -n "$HITS2" ]; then
+              FOUND=1
+              echo "::error::راية بيئة قيمتها الافتراضية true — ستسري في الإنتاج:"
+              echo "$HITS2"
+            fi
+          fi
+
+          if [ "$FOUND" = "1" ]; then
+            echo ""
+            echo "المطلوب بالضبط: صفّر هذه المفاتيح (= false) أو احذف الزر"
+            echo "المرتبط بها قبل بناء نسخة App Store، ثم أعد التشغيل."
+            exit 1
+          fi
+          echo "✅ لا مفاتيح وضع تطوير مفعَّلة."
+
+      - name: بوابة — إعداد Firebase
+        working-directory: ${{ matrix.app }}
+        run: |
+          set -uo pipefail
+          # الشرط على استعمال Firebase فعلًا: التطبيقان اليوم بلا Firebase،
+          # ولو فحصنا دائمًا لفشل كل بناء بلا سبب. وحين تُضاف الحزمة يصير
+          # الفحص ساريًا تلقائيًا — والعطل الذي يمسكه: البناء ينجح والتطبيق
+          # ينهار عند أول إقلاع بـ"FirebaseApp not configured" لأن الـplist
+          # في .gitignore (عن قصد) ولم يُوضع على الرانر.
+          if grep -qE '^\s*(firebase_core|firebase_messaging|cloud_firestore):' pubspec.yaml; then
+            if [ ! -f ios/Runner/GoogleService-Info.plist ]; then
+              echo "::error::المشروع يستعمل Firebase و GoogleService-Info.plist غائب."
+              echo "الملف في .gitignore عن قصد (يحمل معرّفات المشروع)، فلا يأتي مع الكود."
+              echo "المطلوب: أضِف سرًّا base64 للملف وخطوةً تفكّه إلى"
+              echo "  ${{ matrix.app }}/ios/Runner/GoogleService-Info.plist قبل هذه البوابة."
+              exit 1
+            fi
+            echo "✅ GoogleService-Info.plist موجود."
+          else
+            echo "ℹ️ المشروع لا يستعمل Firebase — الفحص لا ينطبق."
+          fi
+
+      - name: بوابة — مخطط عنوان جوجل
+        working-directory: ${{ matrix.app }}
+        run: |
+          set -uo pipefail
+          # عطل صامت بامتياز: البناء ينجح، والتوقيع ينجح، والرفع ينجح — ثم
+          # يضغط المستخدم "دخول بجوجل" فيفتح المتصفح ولا يعود إلى التطبيق
+          # أبدًا، لأن iOS لا يعرف أي تطبيق يستقبل عنوان العودة. الرابط بين
+          # الطرفين هو REVERSED_CLIENT_ID، ولا شيء يشتكي إن غاب.
+          if ! grep -qE '^\s*google_sign_in:' pubspec.yaml; then
+            echo "ℹ️ لا تسجيل دخول بجوجل — الفحص لا ينطبق."
+            exit 0
+          fi
+          PLIST=ios/Runner/GoogleService-Info.plist
+          if [ ! -f "$PLIST" ]; then
+            echo "::error::google_sign_in مستعمَل و $PLIST غائب — لا مصدر لـREVERSED_CLIENT_ID."
+            exit 1
+          fi
+          REV="$(/usr/libexec/PlistBuddy -c 'Print :REVERSED_CLIENT_ID' "$PLIST" 2>/dev/null || true)"
+          if [ -z "$REV" ]; then
+            echo "::error::REVERSED_CLIENT_ID غير موجود داخل $PLIST — نزّل الملف من جديد من Firebase Console."
+            exit 1
+          fi
+          # المقارنة حرفية على القيمة كاملة: تطابق جزئي لا ينفع، فأي حرف
+          # زائد أو ناقص في المخطط يعني أن العودة لن تصل.
+          if ! plutil -p ios/Runner/Info.plist | grep -qF "$REV"; then
+            echo "::error::المخطط $REV غير موجود في CFBundleURLSchemes داخل Info.plist."
+            echo "المطلوب بالضبط — أضِف إلى ios/Runner/Info.plist:"
+            echo "  <key>CFBundleURLTypes</key>"
+            echo "  <array><dict><key>CFBundleURLSchemes</key>"
+            echo "  <array><string>$REV</string></array></dict></array>"
+            exit 1
+          fi
+          echo "✅ مخطط عنوان جوجل مضبوط."
+
+      # ==================================================================
+      # ٣) الشهادة وسلسلة المفاتيح
+      # ==================================================================
+      - name: تركيب شهادة التوقيع
+        env:
+          CERT_B64: ${{ secrets.IOS_CERT_P12_BASE64 }}
+          CERT_PASS: ${{ secrets.IOS_CERT_PASSWORD }}
+        run: |
+          set -euo pipefail
+          P12="$RUNNER_TEMP/cert.p12"
+
+          # tr -d '[:space:]' ضروري لا تجميلي: نسخ قيمة base64 ولصقها في
+          # نافذة أسرار GitHub يدسّ فيها أسطرًا جديدة ومسافات، وbase64 -d
+          # يفشل عليها برسالة "invalid input" لا تدلّ على السبب إطلاقًا.
+          printf '%s' "$CERT_B64" | tr -d '[:space:]' | base64 -d > "$P12"
+          [ -s "$P12" ] || { echo "::error::فكّ base64 للشهادة أنتج ملفًا فارغًا — راجع قيمة IOS_CERT_P12_BASE64."; exit 1; }
+
+          # فحص الـp12 قبل الاستيراد. المحاولة الثانية بـ-legacy ليست تكرارًا:
+          # ملفات p12 المصدَّرة من سلسلة مفاتيح macOS تُشفَّر بـRC2-40، و
+          # OpenSSL 3 لا يحمّل RC2 افتراضيًا — فيفشل الفحص على ملف سليم تمامًا.
+          if openssl pkcs12 -in "$P12" -passin pass:"$CERT_PASS" -noout 2>/dev/null; then
+            echo "✅ الشهادة مقروءة."
+          elif openssl pkcs12 -in "$P12" -passin pass:"$CERT_PASS" -noout -legacy 2>/dev/null; then
+            echo "✅ الشهادة مقروءة بـ-legacy (تشفير RC2-40 القديم من سلسلة مفاتيح macOS)."
+          else
+            echo "::error::تعذّرت قراءة الـp12 — الاحتمالان: IOS_CERT_PASSWORD خاطئة، أو الملف تالف."
+            echo "افحص الملف محليًا: tools/ios-signing-secrets.sh"
+            exit 1
+          fi
+
+          # كلمة مرور عشوائية للسلسلة المؤقتة: لا معنى لكلمة ثابتة في ملف
+          # عام، والسلسلة تُحذف في خطوة التنظيف على أي حال.
+          KC_PASS="$(openssl rand -base64 24)"
+          echo "::add-mask::$KC_PASS"
+          security create-keychain -p "$KC_PASS" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KC_PASS" "$KEYCHAIN_PATH"
+
+          # -f pkcs12 صراحةً: بدونه يخمّن security الصيغة من المحتوى ويفشل
+          # على ملفات سليمة بـ"Unknown format in import()".
+          # -T /usr/bin/codesign: يسمح لـcodesign باستعمال المفتاح.
+          security import "$P12" -k "$KEYCHAIN_PATH" -P "$CERT_PASS" \
+            -f pkcs12 -A -T /usr/bin/codesign -T /usr/bin/security
+
+          # بدون set-key-partition-list يطلب النظام إذنًا برسم نافذة عند أول
+          # استعمال للمفتاح — ولا نوافذ على رانر بلا شاشة، فيعلّق البناء حتى
+          # ينتهي وقته المسموح.
+          security set-key-partition-list -S apple-tool:,apple:,codesign: \
+            -s -k "$KC_PASS" "$KEYCHAIN_PATH" >/dev/null 2>&1
+
+          # login.keychain-db تبقى ضمن قائمة البحث: شهادات آبل الوسيطة
+          # (WWDR) مثبّتة هناك، ولو أخرجناها انكسرت سلسلة الثقة وصار توقيعنا
+          # بلا أصل معروف.
+          security list-keychains -d user -s "$KEYCHAIN_PATH" login.keychain-db
+          security default-keychain -s "$KEYCHAIN_PATH"
+
+          echo "الهويات المتاحة:"
+          security find-identity -v -p codesigning "$KEYCHAIN_PATH"
+
+      # ==================================================================
+      # ٤) البروفايل — تُقرأ بياناته من الملف لا تُكتب باليد
+      # ==================================================================
+      - name: تركيب بروفايل التزويد
+        id: profile
+        env:
+          PROFILE_B64: ${{ matrix.app == 'customer_app' && secrets.IOS_PROFILE_CUSTOMER_BASE64 || secrets.IOS_PROFILE_DRIVER_BASE64 }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$PROFILES_DIR"
+          PROF="$PROFILES_DIR/profile.mobileprovision"
+          printf '%s' "$PROFILE_B64" | tr -d '[:space:]' | base64 -d > "$PROF"
+          [ -s "$PROF" ] || { echo "::error::فكّ base64 للبروفايل أنتج ملفًا فارغًا."; exit 1; }
+
+          # البروفايل ملف CMS موقّع؛ security cms -D يستخرج الـplist من داخله.
+          # نقرأ منه الاسم والـUUID ومعرّف الحزمة بدل أن نجعلها أسرارًا تُكتب
+          # باليد: سرٌّ يُكتب يدويًا يغلط بحرف واحد، والخطأ يظهر بعد البناء
+          # كرسالة توقيع غامضة لا تشير إلى الحرف الغلط.
+          PLIST="$RUNNER_TEMP/profile.plist"
+          security cms -D -i "$PROF" > "$PLIST"
+
+          UUID="$(/usr/libexec/PlistBuddy -c 'Print :UUID' "$PLIST")"
+          NAME="$(/usr/libexec/PlistBuddy -c 'Print :Name' "$PLIST")"
+          EXPIRY="$(/usr/libexec/PlistBuddy -c 'Print :ExpirationDate' "$PLIST")"
+          APPID="$(/usr/libexec/PlistBuddy -c 'Print :Entitlements:application-identifier' "$PLIST")"
+          # معرّف الحزمة = معرّف التطبيق بعد إزالة بادئة معرّف الفريق.
+          BUNDLE="${APPID#*.}"
+
+          # aps-environment داخل البروفايل نفسه: لو غابت هنا فالبروفايل أُنشئ
+          # عن App ID بلا تفعيل Push Notifications، ولا شيء بعد ذلك يصلحها —
+          # التوقيع سينجح والتطبيق يُرفع ولا تصله إشعارات أبدًا. الفشل الآن
+          # أرخص من اكتشافها بعد الرفع.
+          if ! /usr/libexec/PlistBuddy -c 'Print :Entitlements:aps-environment' "$PLIST" >/dev/null 2>&1; then
+            echo "::error::البروفايل بلا aps-environment — أُنشئ عن App ID بلا Push Notifications."
+            echo "المطلوب بالضبط: developer.apple.com ← Identifiers ← $BUNDLE ← فعّل"
+            echo "Push Notifications ← احفظ، ثم Profiles ← أعِد توليد بروفايل App Store"
+            echo "← نزّله ← حدّث السرّ عبر tools/ios-signing-secrets.sh."
+            exit 1
+          fi
+
+          # مطابقة معرّف الحزمة بالتطبيق المبني: خلط بروفايلي التطبيقين وارد
+          # جدًّا (الاسمان متشابهان)، والخطأ يظهر متأخرًا كرسالة توقيع مبهمة.
+          EXPECTED="$([ "${{ matrix.app }}" = "customer_app" ] && echo "jo.aquago.customerApp" || echo "jo.aquago.driverApp")"
+          if [ "$BUNDLE" != "$EXPECTED" ]; then
+            echo "::error::البروفايل لمعرّف حزمة $BUNDLE بينما البناء لـ$EXPECTED."
+            echo "على الأرجح تبادلت قيمتا IOS_PROFILE_CUSTOMER_BASE64 و IOS_PROFILE_DRIVER_BASE64."
+            exit 1
+          fi
+
+          # المسار ثابت لا خيار فيه: xcodebuild لا يقرأ البروفايلات إلا منه،
+          # واسم الملف لازم يكون الـUUID.
+          mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
+          cp "$PROF" ~/Library/MobileDevice/Provisioning\ Profiles/"$UUID".mobileprovision
+
+          {
+            echo "uuid=$UUID"
+            echo "name=$NAME"
+            echo "bundle=$BUNDLE"
+            echo "expiry=$EXPIRY"
+          } >> "$GITHUB_OUTPUT"
+          echo "✅ البروفايل: $NAME | $BUNDLE | ينتهي: $EXPIRY"
+
+      # ==================================================================
+      # ٥) ضبط التوقيع اليدوي
+      # ==================================================================
+      - name: ضبط التوقيع اليدوي
+        working-directory: ${{ matrix.app }}
+        env:
+          TEAM_ID: ${{ secrets.IOS_TEAM_ID }}
+          PROFILE_NAME: ${{ steps.profile.outputs.name }}
+        run: |
+          set -euo pipefail
+
+          # التعديل داخل project.pbxproj لا في xcconfig — وهذا ليس تفضيلًا:
+          # القيمة مكتوبة صراحةً في إعدادات البناء داخل المشروع
+          # ("iPhone Developer")، وإعداد المشروع يغلب الـxcconfig دائمًا، فأي
+          # سطر CODE_SIGN_IDENTITY نكتبه هناك يُهمَل بصمت ويخرج توقيع تطوير
+          # ترفضه App Store Connect بعد رفع كامل.
+          sed -i '' \
+            's/"CODE_SIGN_IDENTITY\[sdk=iphoneos\*\]" = "iPhone Developer";/"CODE_SIGN_IDENTITY[sdk=iphoneos*]" = "Apple Distribution";/g' \
+            ios/Runner.xcodeproj/project.pbxproj
+
+          if grep -q '"CODE_SIGN_IDENTITY\[sdk=iphoneos\*\]" = "iPhone Developer"' ios/Runner.xcodeproj/project.pbxproj; then
+            echo "::error::بقيت هوية iPhone Developer في project.pbxproj — تغيّرت صيغة الملف وفشل الاستبدال."
+            exit 1
+          fi
+          echo "✅ هوية التوقيع صارت Apple Distribution."
+
+          # البقية يكفيها الإلحاق على xcconfig لأنها غير مكتوبة في المشروع،
+          # فلا شيء يغلبها هناك.
+          {
+            echo ""
+            echo "// ---- توقيع يدوي (يضيفه ios-release.yml وقت البناء — لا يُكتب في المستودع) ----"
+            echo "DEVELOPMENT_TEAM = $TEAM_ID"
+            echo "CODE_SIGN_STYLE = Manual"
+            echo "PROVISIONING_PROFILE_SPECIFIER = $PROFILE_NAME"
+          } >> ios/Flutter/Release.xcconfig
+          echo "✅ الفريق والبروفايل مضبوطان."
+
+      - name: تثبيت Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 3.41.6
+          channel: stable
+          cache: true
+
+      - name: تخزين CocoaPods مؤقتًا
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ matrix.app }}/ios/Pods
+            ~/Library/Caches/CocoaPods
+          key: pods-${{ runner.os }}-${{ matrix.app }}-${{ hashFiles(format('{0}/pubspec.yaml', matrix.app)) }}
+          restore-keys: |
+            pods-${{ runner.os }}-${{ matrix.app }}-
+
+      - name: جلب الاعتماديات
+        working-directory: ${{ matrix.app }}
+        run: flutter pub get
+
+      # ==================================================================
+      # ٦) البناء
+      # ==================================================================
+      - name: تحديد رقم البناء
+        id: bn
+        env:
+          INPUT_BN: ${{ inputs.build_number }}
+        run: |
+          set -euo pipefail
+          # الرقم لازم يزيد في كل رفعة وإلا ردّته App Store Connect بـ
+          # "build number already exists" بعد رفع كامل. التاريخ والوقت بصيغة
+          # YYYYMMDDHHMM يضمنان الزيادة تلقائيًا ما دام الوقت يمشي للأمام.
+          BN="${INPUT_BN:-$(date -u +%Y%m%d%H%M)}"
+          if ! printf '%s' "$BN" | grep -qE '^[0-9]+$'; then
+            echo "::error::رقم البناء لازم يكون أرقامًا فقط — القيمة المعطاة: $BN"
+            exit 1
+          fi
+          echo "value=$BN" >> "$GITHUB_OUTPUT"
+          echo "رقم البناء: $BN"
+
+      - name: كتابة ExportOptions.plist
+        working-directory: ${{ matrix.app }}
+        env:
+          TEAM_ID: ${{ secrets.IOS_TEAM_ID }}
+          BUNDLE: ${{ steps.profile.outputs.bundle }}
+          PROFILE_NAME: ${{ steps.profile.outputs.name }}
+        run: |
+          set -euo pipefail
+          # القيمتان في provisioningProfiles مقروءتان من البروفايل نفسه في
+          # خطوة سابقة — لا مكتوبتان باليد. أي اختلاف بحرف بين الاسم هنا
+          # والاسم الحقيقي يوقف التصدير برسالة "no profile matching".
+          # يُكتب سطرًا سطرًا بمسافة بادئة ثابتة: heredoc بمحتوى يبدأ من
+          # العمود صفر يكسر كتلة YAML التي يعيش داخلها هذا الأمر.
+          {
+            echo '<?xml version="1.0" encoding="UTF-8"?>'
+            echo '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">'
+            echo '<plist version="1.0">'
+            echo '<dict>'
+            echo '  <key>method</key><string>app-store</string>'
+            echo '  <key>signingStyle</key><string>manual</string>'
+            echo "  <key>teamID</key><string>$TEAM_ID</string>"
+            echo '  <key>uploadSymbols</key><true/>'
+            echo '  <key>stripSwiftSymbols</key><true/>'
+            echo '  <key>provisioningProfiles</key>'
+            echo '  <dict>'
+            echo "    <key>$BUNDLE</key><string>$PROFILE_NAME</string>"
+            echo '  </dict>'
+            echo '</dict>'
+            echo '</plist>'
+          } > "$RUNNER_TEMP/ExportOptions.plist"
+          plutil -lint "$RUNNER_TEMP/ExportOptions.plist"
+
+      - name: بناء IPA موقّع
+        working-directory: ${{ matrix.app }}
+        env:
+          # نصّ من المستخدم — عبر env لا داخل نص الأمر (منعًا للحقن بالـshell).
+          API_URL: ${{ inputs.api_url }}
+          BUILD_NUMBER: ${{ steps.bn.outputs.value }}
+        run: |
+          set -euo pipefail
+          ARGS=(build ipa --release
+                --build-number="$BUILD_NUMBER"
+                --export-options-plist="$RUNNER_TEMP/ExportOptions.plist")
+          if [ -n "$API_URL" ]; then
+            ARGS+=(--dart-define=API_URL="$API_URL")
+          fi
+          flutter "${ARGS[@]}"
+          ls -lh build/ios/ipa/*.ipa
+
+      - name: فحص aps-environment بعد البناء
+        working-directory: ${{ matrix.app }}
+        run: |
+          set -euo pipefail
+          APP_PATH="$(find build/ios/archive -name 'Runner.app' -maxdepth 5 -type d | head -1)"
+          [ -n "$APP_PATH" ] || APP_PATH="$(find build/ios -name 'Runner.app' -maxdepth 6 -type d | head -1)"
+          [ -n "$APP_PATH" ] || { echo "::error::لم يُعثر على Runner.app بعد البناء."; exit 1; }
+
+          ENT="$(codesign -d --entitlements :- "$APP_PATH" 2>&1 || true)"
+          if printf '%s' "$ENT" | grep -q "aps-environment"; then
+            echo "✅ aps-environment موجودة في التطبيق الموقّع."
+          else
+            # فشل صريح لا تحذير: تطبيق موقّع بلا هذه الصلاحية لا تصله إشعارات
+            # أبدًا — وهذا كامل سبب دفع الاشتراك بدل مسار sideload المجاني.
+            # اكتشافها بعد الرفع يعني رفعة ضائعة وجولة مراجعة على لا شيء.
+            echo "::error::التطبيق الموقّع بلا aps-environment — لن تصله إشعارات."
+            echo "السبب الغالب: البروفايل المستعمل ليس عن App ID مفعَّل عليه Push Notifications."
+            echo "$ENT"
+            exit 1
+          fi
+
+      # ==================================================================
+      # ٧) الرفع — بمفتاح API لا بـApple ID
+      # ==================================================================
+      - name: الرفع إلى TestFlight
+        if: ${{ inputs.upload }}
+        id: upload
+        working-directory: ${{ matrix.app }}
+        env:
+          KEY_ID: ${{ secrets.APPSTORE_KEY_ID }}
+          ISSUER_ID: ${{ secrets.APPSTORE_ISSUER_ID }}
+          PRIVATE_KEY: ${{ secrets.APPSTORE_PRIVATE_KEY }}
+        run: |
+          set -uo pipefail
+          # مفتاح App Store Connect API لا Apple ID: لا كلمة مرور تنتهي ولا
+          # 2FA يطلب رمزًا من هاتف لا أحد يمسكه وقت تشغيل الوركفلو.
+
+          # فحص شكل المفتاح قبل استعماله. الخطأ الحقيقي الذي دفع لكتابة هذا:
+          # وُضع مفتاح "Sign in with Apple" مكان مفتاح App Store Connect —
+          # الملفان .p8 والشكل واحد — وظهر الخطأ بعد الرفع وكأنه في Bundle ID،
+          # فضاع وقت طويل في البحث بالمكان الخطأ.
+          if ! printf '%s' "$PRIVATE_KEY" | grep -q "BEGIN PRIVATE KEY"; then
+            echo "::error::APPSTORE_PRIVATE_KEY لا يحوي سطر BEGIN PRIVATE KEY."
+            echo "الصقْ محتوى ملف .p8 كاملًا بما فيه سطرا BEGIN و END."
+            exit 1
+          fi
+          if ! printf '%s' "$KEY_ID" | grep -qE '^[A-Z0-9]{10}$'; then
+            echo "::error::APPSTORE_KEY_ID لازم يكون عشر محارف [A-Z0-9] — القيمة الحالية بطول ${#KEY_ID}."
+            exit 1
+          fi
+
+          KEYDIR="$HOME/.appstoreconnect/private_keys"
+          mkdir -p "$KEYDIR"
+          # حذف المفتاح مضمون حتى لو فشل الرفع أو قُطع التشغيل.
+          trap 'rm -f "$KEYDIR/AuthKey_$KEY_ID.p8"' EXIT
+          # الاسم بهذه الصيغة تحديدًا — altool يبحث عنه هكذا ولا يقبل غيره.
+          printf '%s\n' "$PRIVATE_KEY" > "$KEYDIR/AuthKey_$KEY_ID.p8"
+          chmod 600 "$KEYDIR/AuthKey_$KEY_ID.p8"
+
+          IPA="$(ls build/ios/ipa/*.ipa | head -1)"
+          echo "الملف: $IPA"
+
+          fail_hint() {
+            if printf '%s' "$1" | grep -qE '401|NOT_AUTHORIZED|Unauthorized|authentication'; then
+              echo "::error::رفض المصادقة (401). راجع الثلاثة معًا لا واحدًا:"
+              echo "  ١. تطابق APPSTORE_KEY_ID مع المفتاح الملصوق فعلًا في APPSTORE_PRIVATE_KEY"
+              echo "     (مفتاح باسم مفتاح آخر يعطي 401 بلا أي إشارة إلى السبب)."
+              echo "  ٢. APPSTORE_ISSUER_ID — من App Store Connect ← Users and Access ← Integrations،"
+              echo "     وهو واحد للحساب كله لا لكل مفتاح."
+              echo "  ٣. دور المفتاح: لازم App Manager أو Admin. الأدوار الأدنى تُصادَق ثم تُرفض الرفع."
+              echo "وتأكّد أنه مفتاح App Store Connect لا مفتاح Sign in with Apple — الشكل واحد."
+            fi
+          }
+
+          # التحقق قبل الرفع: يمسك أخطاء الحزمة (صلاحيات، أيقونات، Info.plist)
+          # في دقيقة، بدل رفعة كاملة تُرفض بعدها ببريد.
+          echo "--- التحقق قبل الرفع ---"
+          if ! OUT="$(xcrun altool --validate-app -f "$IPA" -t ios \
+                --apiKey "$KEY_ID" --apiIssuer "$ISSUER_ID" 2>&1)"; then
+            echo "$OUT"
+            fail_hint "$OUT"
+            exit 1
+          fi
+          echo "$OUT"
+          echo "✅ التحقق نجح."
+
+          echo "--- الرفع ---"
+          if ! OUT="$(xcrun altool --upload-app -f "$IPA" -t ios \
+                --apiKey "$KEY_ID" --apiIssuer "$ISSUER_ID" 2>&1)"; then
+            echo "$OUT"
+            fail_hint "$OUT"
+            exit 1
+          fi
+          echo "$OUT"
+          echo "✅ رُفع إلى TestFlight. المعالجة عند آبل تأخذ ٥–٣٠ دقيقة قبل ظهوره للمختبرين."
+
+      # ==================================================================
+      # ٨) الحفظ والتنظيف والخلاصة
+      # ==================================================================
+      - name: رفع الـIPA كـartifact
+        # always(): البناء أخذ عشر دقائق من رانر مدفوع؛ لو تعثّر الرفع
+        # (شبكة، 401، حصة) يبقى الملف بيدك لترفعه بـTransporter بلا إعادة بناء.
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.app }}-signed-${{ steps.bn.outputs.value }}-${{ github.sha }}
+          path: ${{ matrix.app }}/build/ios/ipa/*.ipa
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: تنظيف
+        if: always()
+        run: |
+          set -uo pipefail
+          # always() ضروري: بدونها تبقى الشهادة والمفتاح الخاص على الرانر عند
+          # أي فشل. رانرات GitHub تُتلَف بعد التشغيل، لكن الاعتماد على ذلك
+          # وحده عادة سيّئة — والتنظيف الصريح يكلف ثوانٍ.
+          security delete-keychain "$KEYCHAIN_PATH" 2>/dev/null || true
+          security list-keychains -d user -s login.keychain-db 2>/dev/null || true
+          rm -rf ~/Library/MobileDevice/Provisioning\ Profiles 2>/dev/null || true
+          rm -rf ~/.appstoreconnect "$PROFILES_DIR" "$RUNNER_TEMP/cert.p12" "$RUNNER_TEMP/profile.plist" 2>/dev/null || true
+          echo "✅ حُذفت السلسلة والبروفايل ومجلد المفاتيح."
+
+      - name: الخلاصة
+        if: always()
+        env:
+          API_URL: ${{ inputs.api_url }}
+        run: |
+          {
+            echo "## 📦 ${{ matrix.app }}"
+            echo ""
+            echo "| البند | القيمة |"
+            echo "|---|---|"
+            echo "| رقم البناء | \`${{ steps.bn.outputs.value }}\` |"
+            echo "| معرّف الحزمة | \`${{ steps.profile.outputs.bundle }}\` |"
+            echo "| البروفايل | ${{ steps.profile.outputs.name }} |"
+            echo "| انتهاء البروفايل | ${{ steps.profile.outputs.expiry }} |"
+            echo "| الكومِت | \`${{ github.sha }}\` |"
+            echo "| الخادم | ${API_URL:-الإنتاج (الافتراضي)} |"
+            if [ "${{ inputs.upload }}" = "true" ]; then
+              if [ "${{ steps.upload.outcome }}" = "success" ]; then
+                echo "| TestFlight | ✅ رُفع |"
+              else
+                echo "| TestFlight | ❌ لم يُرفع — الـIPA محفوظ في Artifacts |"
+              fi
+            else
+              echo "| TestFlight | ⏭️ الرفع مُطفأ (بناء وفحص فقط) |"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

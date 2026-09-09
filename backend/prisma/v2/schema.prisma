@@ -1,0 +1,2749 @@
+// ============================================================================
+// Jordan Gas Platform — Schema v2 (وثيقة التصميم docs/03-database-design-v1.md)
+// يعمل على قاعدة jordan_gas_v2 بالتوازي مع المخطط القديم حتى اكتمال المرحلة 4
+// تشغيل: npx prisma migrate deploy --schema prisma/v2/schema.prisma
+// ============================================================================
+
+generator client {
+  provider        = "prisma-client-js"
+  // داخل node_modules حتى يجده الكود المُجمَّع في dist/ وقت التشغيل
+  output          = "../../node_modules/@prisma-v2/client"
+  previewFeatures = ["postgresqlExtensions"]
+  binaryTargets   = ["native", "linux-musl-openssl-3.0.x"]
+}
+
+datasource db {
+  provider   = "postgresql"
+  url        = env("DATABASE_URL_V2")
+  extensions = [postgis]
+}
+
+// ===================== Enums =====================
+
+enum UserStatus {
+  ACTIVE
+  DISABLED
+}
+
+enum AgencyStatus {
+  PENDING_APPROVAL
+  ACTIVE
+  PAUSED
+  SUSPENDED
+}
+
+enum DriverStatus {
+  OFFLINE
+  AVAILABLE
+  BUSY
+}
+
+enum OrderStatus {
+  CREATED
+  SEARCHING
+  // وكالة تغطي الزبون ومؤهلة بالكامل لكن كل سائقيها مشغولون — الطلب ينتظر
+  // أول سائق يفرغ بدل رفضه، بحد أقصى maxWaitForDriverSeconds
+  WAITING_FOR_DRIVER
+  AGENCY_ASSIGNED
+  DRIVER_ASSIGNED
+  PICKED_UP
+  DELIVERING
+  COMPLETED
+  CANCELLED
+  SEARCH_FAILED
+}
+
+enum OfferStatus {
+  PENDING
+  ACCEPTED
+  REJECTED
+  EXPIRED
+}
+
+enum AssignmentAction {
+  AGENCY_SELECTED
+  AGENCY_SKIPPED
+  DRIVER_OFFER_SENT
+  DRIVER_ACCEPTED
+  DRIVER_REJECTED
+  OFFER_EXPIRED
+  AGENCY_FAILED
+  RETRY_STARTED
+  MANUAL_ASSIGNED
+  SEARCH_FAILED
+  // انسحاب السائق بعد قبوله الطلب — يختلف عن DRIVER_REJECTED (رفض عرض
+  // قبل الالتزام): هنا الطلب كان بيده فعلاً، ولذلك يُلغى ويُفتح له تذكرة
+  DRIVER_CANCELLED
+  // طابور الانتظار الذكي
+  WAITING_STARTED
+  WAITING_RESUMED
+  WAITING_TIMEOUT
+}
+
+enum LedgerEntryType {
+  TOPUP
+  COMMISSION
+  ADJUSTMENT
+  REFUND
+}
+
+enum RechargeStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  CANCELLED
+}
+
+/// طرق الدفع خارج النظام حالياً — تُستبدل ببوابة دفع لاحقاً بلا تغيير المسار
+enum PaymentMethod {
+  BANK_TRANSFER
+  CLIQ
+  EFAWATEERCOM
+  CASH
+}
+
+enum RoleScope {
+  PLATFORM
+  AGENCY
+}
+
+enum TicketStatus {
+  OPEN
+  IN_PROGRESS
+  RESOLVED
+  CLOSED
+}
+
+enum TicketPriority {
+  LOW
+  NORMAL
+  HIGH
+  URGENT
+}
+
+enum DevicePlatform {
+  ANDROID
+  IOS
+  WEB
+}
+
+/// أي تطبيق سجّل هذا الجهاز.
+///
+/// **السائق والزبون قد يكونان الشخص نفسه**: الدخول بالرقم يُرجع الحساب ذاته
+/// (loginByPhone)، فسائقٌ يطلب غازاً لبيته من تطبيق الزبون يحمل `userId`
+/// واحداً لكلا التطبيقين. وبلا هذا الحقل تصل عروضُ التوصيل إلى تطبيق الزبون
+/// وتحديثاتُ طلبه إلى تطبيق السائق — ولا يفصلهما شيء.
+enum DeviceApp {
+  CUSTOMER
+  DRIVER
+}
+
+// ===================== الهوية والصلاحيات =====================
+
+/// فصل وسائل الدخول (قرار 2026-08-02):
+///   الميدان (زبون/سائق) → هاتف + OTP، لأن التطبيق على الجوال
+///   اللوحات (منصة/وكالة/موظفوها) → اسم مستخدم + كلمة مرور، لأنها على
+///   الكمبيوتر ولا تحتمل انتظار رسالة في كل دخول
+/// الهاتف يبقى لكل حساب وسيلة تواصل وتحقق — لا وسيلة دخول للوحات.
+model User {
+  id                 String     @id @default(uuid())
+  // اختياري: موظف لوحة قد لا يملك هاتفاً مسجلاً أصلاً، وزبون دخل بجوجل ولم
+  // يوثّق رقمه بعد (يُطلب منه عند أول طلب — انظر phoneVerifiedAt)
+  phone              String?    @unique
+  /// متى وُثِّق الهاتف برمز تحقق فعلي. الحقل مستقل عن `phone` عمداً: الرقم قد
+  /// يكون مكتوباً (أنشأته اللوحة لسائق مثلاً) دون أن يُثبت صاحبه ملكيته.
+  /// فارغ + هاتف موجود = رقم غير موثَّق، ويُطلب OTP قبل أول طلب.
+  /// **مرة واحدة للأبد**: بعد ملئه لا يُطلب رمز من جديد ولو بدّل الزبون هاتفه
+  /// أو مسح بيانات التطبيق — التوثيق صفة حساب لا صفة جهاز، وهذا ما يوفّر
+  /// كريدتس بوابة الرسائل (قرار 2026-08-30).
+  phoneVerifiedAt    DateTime?
+  /// معرّف حساب جوجل من Firebase (`uid`) — مفتاح هوية الزبون منذ تحوّل الدخول
+  /// إلى جوجل. لا يُشتق من البريد: الزبون قد يغيّر بريده لدى جوجل والـuid ثابت.
+  googleUid          String?    @unique
+  /// معرّف حساب آبل من Firebase (`uid`) — نظير googleUid لمسار «تسجيل الدخول
+  /// بحساب Apple». عمود مستقل لا يشارك googleUid: نفس الشخص يحصل من Firebase
+  /// على uid مختلف لكل مزوّد، وخلطهما في عمود واحد يُضيع معرفة مَن دخل بماذا.
+  ///
+  /// الربط بحساب قائم يمرّ بالبريد وحده، ولا يُعوَّل عليه: آبل تُخفي البريد
+  /// افتراضياً وتُرسل عنوان ترحيل (`@privaterelay.appleid.com`) لا يطابق أي
+  /// حساب. من دخل بجوجل ثم بآبل مع بريد مخفيّ يحصل على حساب ثانٍ — يُدمج
+  /// يدوياً من اللوحة عند اللزوم.
+  appleUid           String?    @unique
+  username           String?    @unique
+  email              String?    @unique
+  // scrypt$salt$key — يُملأ لحسابات اللوحات فقط
+  passwordHash       String?
+  mustChangePassword Boolean    @default(false)
+  lastLoginAt        DateTime?
+  name               String
+  /// آخر مرة عدّل فيها المستخدم اسمه بنفسه — أساس مهلة التبريد بين تعديلين.
+  /// بقاعدة البيانات لا بـRedis: مهلة بالشهور لا يصح أن تسقط بإعادة تشغيل
+  /// أو إخلاء ذاكرة. فارغة = لم يعدّل بعد، فأول تعديل متاح فوراً.
+  /// تعديل المنصة لاسم مستخدم لا يمسّها — لا يستهلك حصة صاحب الحساب.
+  nameUpdatedAt      DateTime?
+  /// متى أقرّ صاحب الحساب اسمه بنفسه. الاسم الآتي من جوجل لم يختره أحد
+  /// لهذه الخدمة: قد يكون بالإنجليزية أو حرفاً واحداً أو كنية لا يعرفها
+  /// أحد — والسائق ينادي به عند الباب. فارغ = لم يُقرّ بعد، فتُعرض شاشة
+  /// التأكيد عند أول دخول (قرار 2026-08-30).
+  ///
+  /// مستقل عن nameUpdatedAt عمداً: الإقرار الأول ليس «تعديلاً» ولا يستهلك
+  /// مهلة التبريد، وإلا علِق من أدخل اسمه بعجلة شهراً كاملاً بلا تصحيح.
+  nameConfirmedAt    DateTime?
+  status             UserStatus @default(ACTIVE)
+  /// حظر من مراسلة الدعم وحده — يمنع فتح طلب تواصل أو الكتابة في محادثته،
+  /// عبر التطبيق وتيليجرام معاً، ولا يمسّ الطلب ولا الدخول. من يغرق الدعم
+  /// برسائل عبثية يبقى زبوناً يشتري غازاً؛ لإيقافه كلياً هناك
+  /// `status = DISABLED` وهو قرار أثقل بكثير.
+  supportBlockedAt   DateTime?
+  supportBlockReason String?
+  avatarUrl          String?
+  // معرّف محادثة تيليجرام — يُملأ حين يشارك المستخدم رقمه مع بوت الدعم،
+  // فتُربط رسائله اللاحقة بحسابه بلا سؤاله عن هويته في كل مرة.
+  telegramChatId     String?    @unique
+  createdAt          DateTime   @default(now())
+
+  addresses              Address[]
+  driverProfile          DriverProfile?
+  roles                  UserRole[]
+  customerOrders         Order[]                       @relation("CustomerOrders")
+  driverOrders           Order[]                       @relation("DriverOrders")
+  couponRedemptions      CouponRedemption[]
+  offers                 DriverOffer[]
+  assignmentEvents       OrderAssignmentHistory[]      @relation("AssignmentDriver")
+  notifications          Notification[]
+  deviceTokens           DeviceToken[]
+  onboardingReviews      AgencyOnboarding[]            @relation("OnboardingReviewer")
+  onboardingDocReviews   AgencyOnboardingDocument[]    @relation("OnboardingDocReviewer")
+  onboardingEvents       AgencyOnboardingEvent[]       @relation("OnboardingEventActor")
+  onboardingRequirements AgencyOnboardingRequirement[] @relation("OnboardingRequirementEditor")
+  contractTemplates      ContractTemplate[]            @relation("ContractTemplateAuthor")
+  contractsCreated       AgencyContract[]              @relation("ContractCreator")
+  contractSignatures     ContractSignature[]           @relation("ContractSigner")
+  contractDocsUploaded   ContractDocument[]            @relation("ContractDocUploader")
+  contractEvents         ContractEvent[]               @relation("ContractEventActor")
+  contractAlertRules     ContractAlertRule[]           @relation("ContractAlertEditor")
+  refreshTokens          RefreshToken[]
+  auditLogs              AuditLog[]                    @relation("Actor")
+  reviewAccountEdits     ReviewAccountConfig[]         @relation("ReviewAccountEditor")
+  otpChannelEdits        OtpChannelSettings[]          @relation("OtpChannelEditor")
+  otpOverrideEdits       OtpChannelOverride[]          @relation("OtpOverrideEditor")
+  assignedTickets        SupportTicket[]               @relation("TicketAssignee")
+  createdTickets         SupportTicket[]               @relation("TicketCreator")
+  ticketMessages         TicketMessage[]
+  orderMessages          OrderMessage[]
+  /// متى قَبِل المستخدم شروط الاستخدام، وأي نسخة منها. النسخة تُخزَّن لا
+  /// مجرد «قَبِل»: تعديل الشروط لاحقاً يجعل موافقةً على نصٍّ آخر بلا معنى،
+  /// فيُسأل من جديد. الغياب = لم يُسأل بعد.
+  termsAcceptedAt        DateTime?
+  termsVersion           String?
+
+  rechargeRequests   RechargeRequest[]       @relation("RechargeRequester")
+  rechargeReviews    RechargeRequest[]       @relation("RechargeReviewer")
+  orderCounterResets OrderCounter[]          @relation("OrderCounterReset")
+  subPaymentsMade    SubscriptionPayment[]   @relation("SubPaymentRequester")
+  subPaymentsReviews SubscriptionPayment[]   @relation("SubPaymentReviewer")
+  notificationPref   NotificationPreference?
+  rateLimitHits      RateLimitViolation[]
+
+  // وحدة الوكالات المحتملة والتواصل
+  approvedLeads      AgencyLead[]            @relation("LeadApprover")
+  deletedLeads       AgencyLead[]            @relation("LeadDeleter")
+  leadStatusChanges  AgencyApprovalHistory[] @relation("LeadStatusChanger")
+  campaignsCreated   WhatsAppCampaign[]      @relation("CampaignCreator")
+  campaignRecipients CampaignRecipient[]     @relation("CampaignRecipientUser")
+  recipientLists     RecipientList[]         @relation("RecipientListCreator")
+  leadImports        AgencyLeadImport[]      @relation("ImportStarter")
+}
+
+/// مُهمَل بعد الانتقال لـ Firebase Phone Auth — الخادم لم يعد يرسل أو يخزّن
+/// رموز تحقق بنفسه. أُبقي الجدول دون حذف (لا rollback مع db push) لحد ما
+/// نتأكد إن الانتقال مستقر، بعدها يُحذف بأمان.
+model OtpCode {
+  id        String   @id @default(uuid())
+  phone     String
+  code      String
+  expiresAt DateTime
+  used      Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([phone])
+}
+
+// كل رفض بسبب تجاوز حد (OTP، إنشاء طلب، إضافة عنوان...) — لا كل طلب، فقط
+// التجاوزات — حتى تعرف لوحة المنصة من يُلحّ كثيراً: هويته إن عُرفت، وIP
+// دائماً. هذا سجل عرض فقط؛ فرض الحد نفسه يبقى بـ Redis (أسرع وأخف).
+model RateLimitViolation {
+  id         String   @id @default(uuid())
+  // otp_request | otp_verify | order_create | address_create
+  scope      String
+  // ما يُحدَّد عليه الحد: رقم هاتف أو معرّف مستخدم، حسب scope
+  identifier String
+  userId     String?
+  ip         String?
+  createdAt  DateTime @default(now())
+
+  user User? @relation(fields: [userId], references: [id])
+
+  @@index([scope, createdAt])
+  @@index([ip])
+  @@index([userId])
+}
+
+model RefreshToken {
+  id         String    @id @default(uuid())
+  userId     String
+  tokenHash  String    @unique
+  deviceInfo String?
+  ip         String?
+  expiresAt  DateTime
+  revokedAt  DateTime?
+  createdAt  DateTime  @default(now())
+
+  /// هوية الجهاز الواحد، ثابتة عبر تدوير التوكن: كل refresh يُلغي الصف
+  /// ويُنشئ غيره، فلولا هذا الحقل لبدا الجهاز الواحد جلسات متعددة في شاشة
+  /// الأدمن ولتعذّر إخراجه. يُورَّث للصف الجديد عند التدوير، ويُوضع في توكن
+  /// الوصول (sid) ليصير سحب الجلسة فورياً لا بعد انتهاء التوكن.
+  /// الافتراضي على مستوى القاعدة لا العميل: `uuid()` من Prisma لا يملأ
+  /// الصفوف القائمة، فيرفض `db push` إضافة العمود على جدول غير فارغ — ونشر
+  /// Railway يشغّل push في كل إقلاع، فكان سيتعطّل على الإنتاج.
+  sessionId String   @default(dbgenerated("gen_random_uuid()"))
+  /// أول دخول بهذه الجلسة — createdAt يتجدّد مع كل تدوير فلا يصلح لعرضه
+  startedAt DateTime @default(now())
+
+  /// لماذا سُحبت الجلسة. الجهاز المطرود يسأل «ليش طلعت؟» و«جلسة غير صالحة»
+  /// لا تجيبه: NEW_DEVICE يجعل الرسالة «دخل أحد من جهاز آخر»، وهي فارق بين
+  /// عطلٍ يُبلَّغ عنه وسلوكٍ متوقَّع. القيم: NEW_DEVICE | PASSWORD_CHANGED |
+  /// LOGOUT | ADMIN. الغياب = إلغاء قديم قبل هذا الحقل.
+  revokedReason String?
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([sessionId])
+}
+
+model Role {
+  id       String    @id @default(uuid())
+  name     String
+  nameAr   String
+  scope    RoleScope
+  agencyId String?
+  isSystem Boolean   @default(false)
+
+  agency      Agency?          @relation(fields: [agencyId], references: [id])
+  permissions RolePermission[]
+  users       UserRole[]
+
+  @@unique([name, agencyId])
+}
+
+model Permission {
+  id     String           @id @default(uuid())
+  key    String           @unique
+  descAr String
+  roles  RolePermission[]
+}
+
+model RolePermission {
+  roleId       String
+  permissionId String
+
+  role       Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionId])
+}
+
+model UserRole {
+  userId   String
+  roleId   String
+  agencyId String?
+
+  user   User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role   Role    @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  agency Agency? @relation(fields: [agencyId], references: [id])
+
+  @@id([userId, roleId])
+  @@index([agencyId])
+}
+
+// ===================== الجغرافيا =====================
+
+model City {
+  id     String  @id @default(uuid())
+  nameAr String  @unique
+  nameEn String?
+  active Boolean @default(false)
+
+  districts District[]
+  zones     Zone[]
+  agencies  Agency[]
+  coupons   CouponCity[]
+}
+
+/// المنطقة داخل المدينة (مثال: زهران، وادي السير) — **وصفية فقط**:
+/// تسمية موقع الوكالة/الطلب، الفلاتر، التقارير، وخريطة فجوات التغطية.
+/// التوزيع يعتمد على نطاق الوكالة (Radius) لا على هذه الحدود.
+/// geom تُستورد من بيانات GIS جاهزة (geoBoundaries/OSM) — لا رسم يدوي
+model District {
+  id     String                                       @id @default(uuid())
+  cityId String
+  nameAr String
+  nameEn String?
+  active Boolean                                      @default(true)
+  geom   Unsupported("geometry(MultiPolygon, 4326)")?
+
+  city              City               @relation(fields: [cityId], references: [id])
+  neighborhoods     Neighborhood[]
+  coverage          AgencyCoverage[]
+  orders            Order[]
+  // وحدة الوكالات المحتملة: المنطقة هي «Area» التي تستهدفها الحملات
+  agencyLeads       AgencyLead[]
+  whatsappCampaigns WhatsAppCampaign[]
+
+  @@unique([cityId, nameAr])
+  @@index([cityId])
+}
+
+/// الحي داخل المنطقة (مثال: عبدون، الصويفية) — وصفي فقط مثل District
+model Neighborhood {
+  id         String                                       @id @default(uuid())
+  districtId String
+  nameAr     String
+  nameEn     String?
+  active     Boolean                                      @default(true)
+  geom       Unsupported("geometry(MultiPolygon, 4326)")?
+
+  district District         @relation(fields: [districtId], references: [id])
+  zones    Zone[]
+  coverage AgencyCoverage[]
+  orders   Order[]
+
+  @@unique([districtId, nameAr])
+  @@index([districtId])
+}
+
+/// مسمّى موقع قديم (قبل استيراد حدود GIS) — وصفي فقط مثل District/Neighborhood
+model Zone {
+  id             String                                 @id @default(uuid())
+  cityId         String
+  neighborhoodId String?
+  nameAr         String
+  active         Boolean                                @default(true)
+  geom           Unsupported("geometry(Polygon, 4326)")
+
+  city         City             @relation(fields: [cityId], references: [id])
+  neighborhood Neighborhood?    @relation(fields: [neighborhoodId], references: [id])
+  coverage     AgencyCoverage[]
+  orders       Order[]
+
+  @@index([cityId])
+  @@index([neighborhoodId])
+}
+
+model Address {
+  id        String  @id @default(uuid())
+  userId    String
+  label     String
+  street    String
+  building  String?
+  floor     String?
+  notes     String?
+  lat       Float
+  lng       Float
+  isDefault Boolean @default(false)
+  // حذف "منطقي": عنوان له طلبات سابقة لا يُحذف فعلياً (Order.addressId يشير
+  // إليه) فيُخفى بدلاً من ذلك — الحذف الفعلي يبقى ممكناً لعنوان بلا طلبات
+  active    Boolean @default(true)
+
+  user   User    @relation(fields: [userId], references: [id])
+  orders Order[]
+
+  @@index([userId])
+}
+
+// ===================== الوكالات =====================
+
+model Agency {
+  id                               String       @id @default(uuid())
+  cityId                           String
+  nameAr                           String
+  phone                            String
+  status                           AgencyStatus @default(PENDING_APPROVAL)
+  autoDispatch                     Boolean      @default(false)
+  /// هل تُفوتَر هذه الوكالة اشتراكاً شهرياً؟ الافتراضي نعم — لكن المنصة
+  /// تستطيع إعفاء وكالة بعينها (اتفاق خاص، فترة تجربة، شراكة). لا أثر له
+  /// على التوزيع بحال: الوكالة المعفاة والمدينة كلتاهما توزّعان.
+  subscriptionEnabled              Boolean      @default(true)
+  /// سعر اشتراك مخصَّص لهذه الوكالة (د.أ) — null يعني استخدام السعر العام
+  /// (DispatchSettings.subscriptionMonthlyPrice). صفر قيمة صريحة صالحة
+  /// (وكالة مشترِكة فعلياً بسعر صفر)، تختلف عن subscriptionEnabled=false
+  /// (إعفاء كامل من الفوترة).
+  subscriptionMonthlyPriceOverride Decimal?     @db.Decimal(10, 2)
+  rating                           Float        @default(5)
+  ratingCount                      Int          @default(0)
+  createdAt                        DateTime     @default(now())
+
+  city             City                         @relation(fields: [cityId], references: [id])
+  branches         AgencyBranch[]
+  coverage         AgencyCoverage[]
+  workingHours     AgencyWorkingHour[]
+  holidays         AgencyHoliday[]
+  drivers          DriverProfile[]
+  wallet           Wallet?
+  availability     AgencyBottleAvailability[]
+  orders           Order[]
+  offers           DriverOffer[]
+  assignmentEvents OrderAssignmentHistory[]
+  memberRoles      UserRole[]
+  customRoles      Role[]
+  tickets          SupportTicket[]
+  rechargeRequests RechargeRequest[]
+  subInvoices      SubscriptionInvoice[]
+  subPayments      SubscriptionPayment[]
+  /// سجل العميل المحتمل الذي تحوّل إلى هذه الوكالة — إن وُجد
+  lead             AgencyLead?
+  /// ملف المنشأة: الهوية القانونية والتراخيص والوثائق. صفٌّ يُنشأ عند أول
+  /// فتح للنموذج لا عند إنشاء الوكالة — الوكالات القائمة قبل هذه الوحدة
+  /// بلا ملف، وغيابه حالةٌ صالحة تعني «لم يبدأ بعد».
+  onboarding       AgencyOnboarding?
+  contracts        AgencyContract[]
+
+  @@index([cityId, status])
+}
+
+/// الفرع = نقطة GPS + نطاق توصيل بالكيلومترات. الأهلية للطلب تُحسب
+/// بالمسافة (ST_DWithin) لا برسم حدود — أي وكالة جديدة تسجل موقعها
+/// ونطاقها وتشتغل فوراً في أي مدينة.
+model AgencyBranch {
+  id                String  @id @default(uuid())
+  agencyId          String
+  nameAr            String
+  lat               Float
+  lng               Float
+  deliveryRadiusKm  Float   @default(5)
+  // false = إحداثيات مبدئية (مركز المدينة) لم يؤكدها صاحب الوكالة بعد،
+  // فتلتقط اللوحة موقعه من GPS تلقائياً عند أول فتح
+  locationConfirmed Boolean @default(false)
+  address           String?
+  isMain            Boolean @default(false)
+  active            Boolean @default(true)
+
+  agency   Agency           @relation(fields: [agencyId], references: [id])
+  drivers  DriverProfile[]
+  orders   Order[]
+  coverage AgencyCoverage[]
+
+  @@index([agencyId])
+}
+
+/// تغطية الفرع بإحدى ثلاث درجات (حقل واحد فقط معبأ لكل صف):
+///  - districtId: منطقة كاملة بكل أحيائها الحالية والمستقبلية
+///  - neighborhoodId: حي محدد
+///  - zoneId: منطقة تغطية منفردة (الدرجة القديمة — ما زالت مدعومة)
+model AgencyCoverage {
+  id             String  @id @default(uuid())
+  agencyId       String
+  branchId       String
+  zoneId         String?
+  neighborhoodId String?
+  districtId     String?
+
+  agency       Agency        @relation(fields: [agencyId], references: [id])
+  branch       AgencyBranch  @relation(fields: [branchId], references: [id])
+  zone         Zone?         @relation(fields: [zoneId], references: [id])
+  neighborhood Neighborhood? @relation(fields: [neighborhoodId], references: [id])
+  district     District?     @relation(fields: [districtId], references: [id])
+
+  @@unique([branchId, zoneId])
+  @@unique([branchId, neighborhoodId])
+  @@unique([branchId, districtId])
+  @@index([zoneId])
+  @@index([neighborhoodId])
+  @@index([districtId])
+}
+
+model AgencyWorkingHour {
+  id        String @id @default(uuid())
+  agencyId  String
+  dayOfWeek Int
+  opensAt   String
+  closesAt  String
+
+  agency Agency @relation(fields: [agencyId], references: [id])
+
+  @@unique([agencyId, dayOfWeek, opensAt])
+}
+
+model AgencyHoliday {
+  id       String   @id @default(uuid())
+  agencyId String
+  date     DateTime @db.Date
+  noteAr   String?
+
+  agency Agency @relation(fields: [agencyId], references: [id])
+
+  @@unique([agencyId, date])
+}
+
+// ===================== السائقون =====================
+
+model DriverProfile {
+  userId        String       @id
+  agencyId      String
+  branchId      String?
+  status        DriverStatus @default(OFFLINE)
+  isVerified    Boolean      @default(false)
+  /// أول لوحة من `vehiclePlates` — مشتق يبقى لأن تطبيق السائق ولوحة الإدارة
+  /// يقرآنه. لا يُكتب مباشرة: الخدمة تُبقيه مزامناً مع أول عنصر في القائمة.
+  vehiclePlate  String?
+  /// كم مركبة يشغّلها هذا السائق — سجلّ أسطول لا قاعدة توزيع: المحرك يسند
+  /// توصيلة واحدة في المرة مهما بلغ العدد.
+  vehicleCount  Int          @default(1)
+  /// لوحات مركباته — اختيارية بالكامل، وقد تكون أقل من `vehicleCount`
+  /// (وكالة تعرف عدد مركباته ولم تسجّل لوحاتها بعد).
+  vehiclePlates String[]     @default([])
+  rating        Float        @default(5)
+  ratingCount   Int          @default(0)
+  currentLat    Float?
+  currentLng    Float?
+  lastSeenAt    DateTime?
+
+  user   User          @relation(fields: [userId], references: [id])
+  agency Agency        @relation(fields: [agencyId], references: [id])
+  branch AgencyBranch? @relation(fields: [branchId], references: [id])
+
+  @@index([agencyId, status])
+}
+
+// ===================== الكتالوج والتوفر =====================
+
+/// صورة رفعها الأدمن من جهازه.
+///
+/// **مرحلة انتقال — `data` و`storageKey` معاً عمداً.** التخزين ينتقل من
+/// بايتات داخل القاعدة إلى مخزن كائنات (Spaces محلياً أو على DigitalOcean)
+/// بلا حذف صف واحد: الصفوف القديمة تملك `data` فقط، الجديدة `storageKey`
+/// فقط بعد اكتمال الترحيل، والفترة البينية تقرأ من أيّهما موجود. حذف
+/// `data` نهائياً خطوة تالية منفصلة بعد التحقق الكامل من الترحيل — أمرٌ
+/// صريح لا يقع ضمن هذا التغيير.
+model UploadedImage {
+  id        String   @id @default(uuid())
+  /// القديم — يبقى للصفوف المرحَّلة سلفاً، ويُقرأ إن غاب storageKey
+  data      Bytes?
+  /// الجديد — مفتاح في StorageService، لا رابطاً كاملاً ولا مساراً محلياً
+  storageKey String?
+  mimeType  String
+  createdAt DateTime @default(now())
+}
+
+/// نوع قارورة مياه معروض في الكتالوج.
+///
+/// `sizeLiters` وحدة القياس هنا — لتر لا كيلوغرام: المياه تُباع بالحجم،
+/// وهو أوضح فرق عن نموذج الغاز الذي اشتُقّ منه هذا الجدول. والكسر
+/// العشري ضروري (18.9 لتر = خمسة غالونات) فلا يكفي عدد صحيح.
+model WaterBottleType {
+  id         String  @id @default(uuid())
+  nameAr     String
+  sizeLiters Decimal @db.Decimal(6, 2)
+  price      Decimal @db.Decimal(10, 2)
+  imageUrl   String?
+  active     Boolean @default(true)
+  sort       Int     @default(0)
+
+  availability AgencyBottleAvailability[]
+  orderItems   OrderItem[]
+}
+
+/// بطاقة في صفحة «مطوّرو التطبيق» داخل التطبيقين.
+///
+/// تُدار من لوحة المنصة لا من الكود: الاسم يتغيّر، ويُضاف اسم، ويُحدَّث رابط
+/// — ولا يستحق أيٌّ من ذلك إصدار نسخة جديدة من التطبيقين وانتظار مراجعة
+/// المتجر. الصورة تمر بمخزن الصور نفسه (UploadedImage) كبقية صور اللوحة.
+model AppDeveloper {
+  id        String  @id @default(uuid())
+  nameAr    String
+  /// الدور بكلمة أو كلمتين: «تطوير»، «تصميم واجهات»
+  roleAr    String?
+  /// رابط اختياري — موقع، لينكدإن، أو واتساب. تفتحه البطاقة عند الضغط.
+  url       String?
+  /// صورة رمزية صغيرة. غيابها يعرض أول حرف من الاسم بدل مربّع فارغ.
+  avatarUrl String?
+
+  active    Boolean  @default(true)
+  sort      Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model PromoBanner {
+  id        String    @id @default(uuid())
+  imageUrl  String
+  linkUrl   String?
+  /// لأي تطبيق يظهر هذا البانر. الفصل مقصود: ما يخاطب الزبون (عروض، أسعار)
+  /// لا معنى له عند المندوب، وما يخاطب المندوب (تعليمات، مكافآت) لا يصحّ أن
+  /// يراه الزبون. الافتراضي CUSTOMER فتبقى البانرات القائمة كما كانت.
+  audience  AppTarget @default(CUSTOMER)
+  active    Boolean   @default(true)
+  sort      Int       @default(0)
+  createdAt DateTime  @default(now())
+
+  /// الاستعلام الوحيد على هذا الجدول: النشط لجمهور واحد مرتّباً
+  @@index([audience, active, sort])
+}
+
+model AgencyBottleAvailability {
+  id             String   @id @default(uuid())
+  agencyId       String
+  bottleTypeId String
+  available      Boolean  @default(true)
+  updatedAt      DateTime @updatedAt
+
+  agency       Agency       @relation(fields: [agencyId], references: [id])
+  bottleType WaterBottleType @relation(fields: [bottleTypeId], references: [id])
+
+  @@unique([agencyId, bottleTypeId])
+}
+
+// ===================== الطلبات =====================
+
+/// عدّاد أرقام الطلبات — الرقم المعروض للزبون والسائق والفاتورة.
+///
+/// كان الرقم عشوائياً (JOR-482913): لا يقول كم طلباً مرّ، ولا يُقرأ على
+/// الهاتف بسهولة، واحتمال تصادمه قائم. صار متسلسلاً حقيقياً يزيد واحداً مع
+/// كل طلب، بقفل صف واحد فتبقى الأرقام متتابعة بلا ثقوب ولا تكرار مهما
+/// تزامنت الطلبات.
+///
+/// صف واحد فقط (id = 1) كـ DispatchSettings.
+model OrderCounter {
+  id     Int    @id @default(1)
+  /// الرقم التالي الذي سيُمنح
+  next   Int    @default(1)
+  /// بادئة الرمز — تسبق الرقم: JOR-00042
+  prefix String @default("JOR")
+
+  /// آخر تصفير أجراه الأدمن: متى، ومن، ومن أي رقم بدأ العد بعده
+  resetAt   DateTime?
+  resetById String?
+  resetFrom Int?
+
+  updatedAt DateTime @updatedAt
+  resetBy   User?    @relation("OrderCounterReset", fields: [resetById], references: [id])
+}
+
+model Order {
+  id             String      @id @default(uuid())
+  code           String      @unique
+  customerId     String
+  agencyId       String?
+  branchId       String?
+  driverId       String?
+  addressId      String
+  // الموقع المحلول من GPS — للتسمية والتقارير فقط (لا يؤثر على التوزيع)
+  zoneId         String?
+  neighborhoodId String?
+  districtId     String?
+  status         OrderStatus @default(CREATED)
+
+  deliveryLat      Float
+  deliveryLng      Float
+  addressText      String
+  // الفاتورة: سعر الأسطوانات + عمولة المنصة الثابتة − خصم الكوبون. لا رسوم
+  // توصيل — التوصيل ضمن خدمة الوكالة، وربح المنصة هو العمولة وحدها.
+  subtotal         Decimal @db.Decimal(10, 2)
+  commissionAmount Decimal @db.Decimal(10, 2)
+  /// خصم الكوبون. **تتحمّله الوكالة**: الزبون يدفع نقداً أقل بهذا المقدار
+  /// وعمولة المنصة لا تتغيّر. مخزَّن على الطلب لا محسوباً عند العرض، فسعر
+  /// الكوبون قد يتغيّر أو يُلغى بعد الطلب وفاتورةُ طلبٍ مضى لا تتبدّل.
+  discountAmount   Decimal @default(0) @db.Decimal(10, 2)
+  /// معرّف ورمز الكوبون لحظة الطلب — الرمز نسخة ثابتة تبقى ولو حُذف الكوبون
+  couponId         String?
+  couponCode       String?
+  /// ما يدفعه الزبون فعلاً: subtotal + commissionAmount − discountAmount
+  total            Decimal @db.Decimal(10, 2)
+
+  notes             String?
+  rating            Int?
+  /// ما كتبه الزبون مع نجومه. النجمة رقم يُعدَّل به متوسط، والكلام هو ما
+  /// يُقرأ منه سبب النجمة — بدونه لا تعرف الوكالة لماذا قُيّمت هكذا.
+  ratingComment     String?
+  /// متى قُيّم — التقييم يأتي بعد التسليم بساعات أحياناً، وcreatedAt لا يقوله
+  ratedAt           DateTime?
+  cancelReason      String?
+  cancelledByUserId String?
+
+  createdAt         DateTime  @default(now())
+  searchStartedAt   DateTime?
+  // انتظار سائق: لحظة دخول الطابور وموعد الإلغاء التلقائي. تبقى ثابتة عبر
+  // محاولات الاستئناف حتى لا يتمدد الانتظار بلا سقف.
+  waitingSince      DateTime?
+  waitingUntil      DateTime?
+  // انسحاب السائق لسبب يخصّ الزبون (لا يرد / طلب الإلغاء بنفسه): الطلب
+  // موقوف عند AGENCY_ASSIGNED بانتظار قرار الزبون — نبحث له عن سائق آخر أم
+  // نُلغي. انسحاب لأي سبب آخر يستأنف البحث تلقائياً بلا سؤال، فلا يضع هذا
+  // الحقل. null = لا قرار معلّق.
+  redispatchAskedAt DateTime?
+  redispatchReason  String?
+  agencyAssignedAt  DateTime?
+  driverAssignedAt  DateTime?
+  pickedUpAt        DateTime?
+  // وصول السائق إلى باب الزبون — قبل تأكيد التسليم وتحصيل المبلغ بدقائق.
+  // ليست حالة في OrderStatus عمداً: لا تغيّر ما يُسمح به ولا ما ينتظره أحد،
+  // وإنما تُعلم الزبون أن الرجل عند الباب. وجودها يجعل الإعلام غير مكرَّر
+  // إن ضغط السائق الزر مرتين.
+  arrivedAt         DateTime?
+  deliveredAt       DateTime?
+
+  customer     User          @relation("CustomerOrders", fields: [customerId], references: [id])
+  agency       Agency?       @relation(fields: [agencyId], references: [id])
+  branch       AgencyBranch? @relation(fields: [branchId], references: [id])
+  driver       User?         @relation("DriverOrders", fields: [driverId], references: [id])
+  address      Address       @relation(fields: [addressId], references: [id])
+  zone         Zone?         @relation(fields: [zoneId], references: [id])
+  neighborhood Neighborhood? @relation(fields: [neighborhoodId], references: [id])
+  district     District?     @relation(fields: [districtId], references: [id])
+
+  items             OrderItem[]
+  statusHistory     OrderStatusHistory[]
+  offers            DriverOffer[]
+  assignmentHistory OrderAssignmentHistory[]
+  ledgerEntries     LedgerEntry[]
+  tickets           SupportTicket[]
+  chatMessages      OrderMessage[]
+  couponRedemption  CouponRedemption?
+  invoicePublicLink InvoicePublicLink?
+
+  @@index([status])
+  @@index([customerId, createdAt])
+  @@index([agencyId, createdAt])
+  @@index([driverId, createdAt])
+  @@index([neighborhoodId])
+  @@index([districtId])
+}
+
+/// محادثة الطلب بين الزبون والسائق — طرفاها هما هذان وحدهما.
+///
+/// مربوطة بالطلب لا بالشخصين: تُفتح حين يُعيَّن السائق، وتُقفل حين ينتهي
+/// التوصيل. فطلب جديد يبدأ محادثة نظيفة، ولا يبقى خيط مفتوح بين زبون
+/// وسائق لا يجمعهما توصيل قائم.
+///
+/// الرسائل تبقى بعد الإقفال للقراءة فقط — مرجع عند نزاع على ما اتُّفق عليه.
+model OrderMessage {
+  id           String   @id @default(uuid())
+  orderId      String
+  authorUserId String
+  bodyAr       String
+  createdAt    DateTime @default(now())
+
+  order  Order @relation(fields: [orderId], references: [id])
+  author User  @relation(fields: [authorUserId], references: [id])
+
+  @@index([orderId, createdAt])
+}
+
+model OrderItem {
+  id             String  @id @default(uuid())
+  orderId        String
+  bottleTypeId String
+  qty            Int
+  unitPrice      Decimal @db.Decimal(10, 2)
+
+  order        Order        @relation(fields: [orderId], references: [id])
+  bottleType WaterBottleType @relation(fields: [bottleTypeId], references: [id])
+}
+
+model OrderStatusHistory {
+  id          String      @id @default(uuid())
+  orderId     String
+  status      OrderStatus
+  actorUserId String?
+  noteAr      String?
+  createdAt   DateTime    @default(now())
+
+  order Order @relation(fields: [orderId], references: [id])
+
+  @@index([orderId])
+}
+
+// ===================== محرك التوزيع =====================
+
+model DriverOffer {
+  id          String      @id @default(uuid())
+  orderId     String
+  agencyId    String
+  driverId    String
+  attemptNo   Int
+  status      OfferStatus @default(PENDING)
+  createdAt   DateTime    @default(now())
+  expiresAt   DateTime
+  respondedAt DateTime?
+
+  order  Order  @relation(fields: [orderId], references: [id])
+  agency Agency @relation(fields: [agencyId], references: [id])
+  driver User   @relation(fields: [driverId], references: [id])
+  // + قيد جزئي يدوي: one_pending_offer_per_order (انظر seed.v2.ts §setup)
+
+  @@index([orderId])
+  @@index([driverId, status])
+  @@index([agencyId, status, createdAt])
+}
+
+model OrderAssignmentHistory {
+  id        String           @id @default(uuid())
+  orderId   String
+  agencyId  String?
+  driverId  String?
+  action    AssignmentAction
+  reason    String?
+  createdAt DateTime         @default(now())
+
+  order  Order   @relation(fields: [orderId], references: [id])
+  agency Agency? @relation(fields: [agencyId], references: [id])
+  driver User?   @relation("AssignmentDriver", fields: [driverId], references: [id])
+
+  @@index([orderId, createdAt])
+  @@index([agencyId, action, createdAt])
+}
+
+model DispatchSettings {
+  id                         Int      @id @default(1)
+  distanceWeight             Decimal  @default(0.35) @db.Decimal(4, 3)
+  availabilityWeight         Decimal  @default(0.20) @db.Decimal(4, 3)
+  driverAvailabilityWeight   Decimal  @default(0.20) @db.Decimal(4, 3)
+  // ضغط العمل: عدد طلبات الوكالة الجارية الآن (الأقل ضغطاً يُقدَّم)
+  loadWeight                 Decimal  @default(0.10) @db.Decimal(4, 3)
+  ratingWeight               Decimal  @default(0.10) @db.Decimal(4, 3)
+  responseRateWeight         Decimal  @default(0.05) @db.Decimal(4, 3)
+  /// مهلة ردّ السائق على العرض. عشرون ثانية كانت تكفي سائقاً يمسك هاتفه
+  /// والتطبيق مفتوح، لا سائقاً يصله إشعار وهو يقود: يشعر بالاهتزاز، يوقف،
+  /// يفتح القفل، يفتح التطبيق — فيجد العرض قد راح. الإشعار وعدٌ لا يُوفى.
+  offerTimeoutSeconds        Int      @default(45)
+  // مهلة التعيين اليدوي (Auto Dispatch OFF) قبل نقل الطلب لوكالة أخرى
+  manualAssignTimeoutSeconds Int      @default(300)
+  // طابور الانتظار: أقصى مدة يبقى فيها الطلب بانتظار سائق قبل الإلغاء
+  // التلقائي، وكل كم ثانية يُعاد فحص الوكالات المؤهلة أثناء الانتظار
+  maxWaitForDriverSeconds    Int      @default(900)
+  waitRetryIntervalSeconds   Int      @default(30)
+  maxDriversPerAgency        Int      @default(3)
+  /// كم جولة يطرق فيها المحرك باب السائقين أنفسهم. الجولة الأولى لمن لم
+  /// يُعرض عليه، وما بعدها إعادة على من انقضت مهلته دون رد وحده — من رفض
+  /// صراحةً لا يُعاد عليه. 1 = سلوك الجولة الواحدة القديم.
+  maxDispatchRounds          Int      @default(2)
+  /// هل يغلق جدول الدوام الوكالةَ خارج ساعاتها؟
+  ///
+  /// صمّام أمان على محرّك التوزيع: الميزة تُخرج من التوزيع كل وكالة أدخلت
+  /// جدولاً وحلّ وقتٌ خارجه، وإطفاؤها من اللوحة يعيد السلوك السابق فوراً بلا
+  /// نشر. وكالة بلا جدول لا يمسّها هذا المفتاح بحال — تعمل على مدار الساعة.
+  respectWorkingHours        Boolean  @default(true)
+  maxAgenciesPerOrder        Int      @default(3)
+  lowBalanceThreshold        Decimal  @default(10) @db.Decimal(12, 2)
+  minBalanceForDispatch      Decimal  @default(0) @db.Decimal(12, 2)
+  // عمولة المنصة الثابتة (د.أ) عن كل طلب مهما كان سعره — موحدة لكل الوكالات،
+  // تُثبّت على الطلب لحظة القبول
+  commissionPerOrder         Decimal  @default(0.50) @db.Decimal(10, 2)
+  // سقف نطاق التوصيل الذي تستطيع الوكالة اختياره
+  maxDeliveryRadiusKm        Float    @default(15)
+  /// هل يرى المستخدم اسم موظف الدعم الذي ردّ عليه؟ مفعّل = ردّ بوجه وباسم،
+  /// معطّل = «الدعم» بلا هوية. القرار يخصّ فريقك: بعضهم يفضّل ألا يُعرَف
+  /// أفراده بالاسم، وبعضهم يرى الاسم أدفأ وأكثر مسؤولية.
+  showSupportAgentName       Boolean  @default(true)
+  /// قيمة اشتراك الوكالة الشهري (د.أ). صفر = لا فوترة اشتراك إطلاقاً.
+  /// لا علاقة له بالتوزيع بأي حال — انظر SubscriptionInvoice.
+  subscriptionMonthlyPrice   Decimal  @default(0) @db.Decimal(10, 2)
+  /// هل يُشترط قرب السائق من باب الزبون ليؤكد وصوله؟ مفعّل = لا يفتح شاشة
+  /// التسليم قبل أن يصل فعلاً. معطّل = الثقة بالسائق (أو GPS المدينة رديء).
+  arrivalGeofenceEnabled     Boolean  @default(true)
+  /// نصف قطر «وصلتُ» بالأمتار — دون هذه المسافة يُقبل تأكيد الوصول.
+  /// 250م افتراضاً: تسامح مع خطأ GPS في الأزقة والأبنية العالية بلا أن
+  /// يسمح بتأكيد وصول من الشارع التالي.
+  arrivalRadiusMeters        Int      @default(250)
+  updatedAt                  DateTime @updatedAt
+}
+
+// ===================== اشتراك الوكالة =====================
+
+/// فاتورة اشتراك شهرية. **دفتر مستقل تماماً عن `Wallet`** — وهذا شرط لا
+/// تفصيل: رصيد المحفظة يحكم التوزيع (`balance <= 0` يُخرج الوكالة)، فلو
+/// خُصم الاشتراك منها لأوقف التوزيع من باب خلفي. الدَين هنا يتراكم وحده،
+/// والوكالة تظل توزّع سواء دفعت أو لم تدفع.
+model SubscriptionInvoice {
+  id          String    @id @default(uuid())
+  agencyId    String
+  /// الشهر المُفوتَر — أول يوم منه بتوقيت عمّان، ومعه قيد فريد يمنع
+  /// إصدار فاتورتين لنفس الشهر مهما تكرر تشغيل المولّد
+  periodStart DateTime
+  periodEnd   DateTime
+  /// سعر الشهر كما كان لحظة الإصدار — تغيير السعر لاحقاً لا يعيد كتابة
+  /// فواتير صدرت، وإلا اختلف ما تراه الوكالة عمّا وافقت عليه
+  amount      Decimal   @db.Decimal(10, 2)
+  /// ما سُدِّد من هذه الفاتورة — قد يكون جزئياً
+  paidAmount  Decimal   @default(0) @db.Decimal(10, 2)
+  paidAt      DateTime?
+  createdAt   DateTime  @default(now())
+
+  agency Agency @relation(fields: [agencyId], references: [id])
+
+  @@unique([agencyId, periodStart])
+  @@index([agencyId, periodStart])
+}
+
+/// طلب الوكالة دفع فاتورة/فواتير اشتراكها — بنفس مسار شحن الرصيد تماماً:
+/// الوكالة تطلب، والمالية تعتمد بعد وصول المبلغ. الاعتماد يسدّد الفواتير
+/// من الأقدم فالأحدث.
+model SubscriptionPayment {
+  id       String         @id @default(uuid())
+  agencyId String
+  amount   Decimal        @db.Decimal(10, 2)
+  status   RechargeStatus @default(PENDING)
+  method   PaymentMethod
+  noteAr   String?
+
+  requestedById String
+  createdAt     DateTime @default(now())
+
+  reviewedById String?
+  reviewedAt   DateTime?
+  reference    String?
+  reviewNoteAr String?
+
+  agency      Agency @relation(fields: [agencyId], references: [id])
+  requestedBy User   @relation("SubPaymentRequester", fields: [requestedById], references: [id])
+  reviewedBy  User?  @relation("SubPaymentReviewer", fields: [reviewedById], references: [id])
+
+  @@index([status, createdAt])
+  @@index([agencyId, createdAt])
+}
+
+// ===================== المالية =====================
+
+model Wallet {
+  id       String  @id @default(uuid())
+  agencyId String  @unique
+  // كاش — المصدر الحقيقي هو SUM(LedgerEntry) ويُدقَّق بمهمة دورية
+  balance  Decimal @default(0) @db.Decimal(12, 2)
+
+  agency  Agency        @relation(fields: [agencyId], references: [id])
+  entries LedgerEntry[]
+}
+
+model LedgerEntry {
+  id           String          @id @default(uuid())
+  walletId     String
+  orderId      String?
+  type         LedgerEntryType
+  amount       Decimal         @db.Decimal(12, 2)
+  balanceAfter Decimal         @db.Decimal(12, 2)
+  reference    String?
+  noteAr       String?
+  actorUserId  String?
+  createdAt    DateTime        @default(now())
+
+  wallet          Wallet           @relation(fields: [walletId], references: [id])
+  order           Order?           @relation(fields: [orderId], references: [id])
+  rechargeRequest RechargeRequest?
+
+  @@index([walletId, createdAt])
+  @@index([orderId])
+}
+
+/// طلب شحن رصيد: الوكالة تطلب، والمالية تعتمد بعد تأكد وصول المبلغ.
+/// لا شحن مباشر — كل دينار يدخل المحفظة له طلب يحمل مَن طلب ومتى ومن اعتمد
+/// وبأي مرجع. وحين تُربط بوابة دفع تحل محل خطوة الاعتماد اليدوي وحدها.
+model RechargeRequest {
+  id       String         @id @default(uuid())
+  agencyId String
+  amount   Decimal        @db.Decimal(12, 2)
+  status   RechargeStatus @default(PENDING)
+  method   PaymentMethod
+  noteAr   String?
+
+  requestedById String
+  createdAt     DateTime @default(now())
+
+  reviewedById  String?
+  reviewedAt    DateTime?
+  /// رقم الحوالة/العملية كما أدخله المحاسب — يربط الطلب بالإيصال البنكي
+  reference     String?
+  reviewNoteAr  String?
+  /// الحركة الناتجة عن الاعتماد — أثر تدقيق من الطلب إلى الدفتر
+  ledgerEntryId String?   @unique
+
+  agency      Agency       @relation(fields: [agencyId], references: [id])
+  requestedBy User         @relation("RechargeRequester", fields: [requestedById], references: [id])
+  reviewedBy  User?        @relation("RechargeReviewer", fields: [reviewedById], references: [id])
+  ledgerEntry LedgerEntry? @relation(fields: [ledgerEntryId], references: [id])
+
+  @@index([status, createdAt])
+  @@index([agencyId, createdAt])
+}
+
+/// حسابات المنصة المستقبِلة للتحويلات: الوكالة تختار طريقة الشحن فتظهر لها
+/// حسابات تلك الطريقة لتعرف لوين تحوّل. تُدار من لوحة المنصة، وأكثر من حساب
+/// لكل طريقة مقصود — قد يكون للمنصة عدة بنوك أو عدة ألقاب كليك.
+model PaymentAccount {
+  id            String        @id @default(uuid())
+  method        PaymentMethod
+  /// اسم صاحب الحساب كما هو مسجّل لدى البنك/الكليك — تتأكد منه الوكالة قبل التحويل
+  holderNameAr  String
+  /// رقم الحساب للتحويل البنكي، أو لقب الكليك (alias) — الحقل الذي تنسخه الوكالة
+  accountNumber String
+  /// رابط دفع اختياري (رابط كليك مثلاً). حين يوجد يُرمَّز في الـQR بدل رقم
+  /// الحساب، فمسحه يفتح التطبيق مباشرة بدل أن يعطي نصاً يُنسخ يدوياً.
+  paymentLink   String?
+  /// اسم البنك — يلزم للتحويل البنكي، ولا معنى له لكليك بلا بنك محدد
+  bankNameAr    String?
+  /// المعطّل يختفي عن الوكالات ويبقى بالسجل — حذفه يقطع مرجع تحويلات سابقة
+  isActive      Boolean       @default(true)
+  sortOrder     Int           @default(0)
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  @@index([isActive, method, sortOrder])
+}
+
+// ===================== الفواتير =====================
+
+/// إعدادات الفواتير — سجل واحد (id = 1) كـ DispatchSettings.
+///
+/// كل عنصر في الفاتورة له مفتاح إظهار منفصل عن قيمته: الإخفاء لا يمسح ما
+/// كُتب. من يخفي الرقم الضريبي مؤقتاً ريثما يصدر لا يفقده، ويعيده بمفتاح
+/// واحد. ولذلك حقول `show*` منفصلة عن حقول البيانات.
+model InvoiceSettings {
+  id Int @id @default(1)
+
+  /// المفتاح العام: معطّل = لا فاتورة تُعرض ولا تُنزَّل في أي مكان.
+  /// الافتراضي معطّل — الفاتورة تحمل هوية ضريبية، وإصدارها قبل ضبطها خطأ.
+  enabled Boolean @default(false)
+
+  // ---- هوية المُصدِر كما تظهر في الترويسة ----
+  companyNameAr  String? @default("غاز الأردن — GasGO")
+  companyNameEn  String?
+  taxNumber      String?
+  licenseNumber  String?
+  addressAr      String? @default("عمّان، الأردن")
+  phone          String?
+  email          String?
+  website        String?
+  /// شعار التطبيق على الفاتورة — رابط من رفع الأدمن أو رابط خارجي
+  logoUrl        String?
+  /// جهة الاستفسارات المالية في تذييل الفاتورة
+  financeContact String?
+  /// سطر أسفل الفاتورة (شكر، شروط، ملاحظة قانونية)
+  footerNoteAr   String?
+
+  // ---- مفاتيح الإظهار: منفصلة عن القيم عمداً، فالإخفاء لا يمسح ما كُتب ----
+  showLogo            Boolean @default(true)
+  showCompanyNameAr   Boolean @default(true)
+  showCompanyNameEn   Boolean @default(false)
+  showTaxNumber       Boolean @default(true)
+  showLicenseNumber   Boolean @default(true)
+  showAddress         Boolean @default(true)
+  showPhone           Boolean @default(true)
+  showEmail           Boolean @default(true)
+  showWebsite         Boolean @default(false)
+  /// عناصر جسم الفاتورة
+  showCustomerName    Boolean @default(true)
+  showCustomerPhone   Boolean @default(false)
+  showDeliveryAddress Boolean @default(true)
+  showAgencyName      Boolean @default(true)
+  showDriverName      Boolean @default(false)
+  showCommissionLine  Boolean @default(true)
+  showDiscountLine    Boolean @default(true)
+  showFinanceContact  Boolean @default(true)
+  showFooterNote      Boolean @default(true)
+  /// ختم «معتمد» على إيصالات الدفع المعتمدة
+  showStamp           Boolean @default(true)
+
+  updatedAt DateTime @updatedAt
+}
+
+/// رابط دائم لفتح فاتورة طلب من متصفح خارجي بلا تسجيل دخول — الرمز الخام
+/// لا يُخزَّن أبداً، فقط بصمته (tokenHash). صفّ واحد نشط لكل طلب: توليد
+/// رابط جديد يكتب فوق tokenHash القديم فيُبطله تلقائياً بلا حاجة لسجلّ
+/// روابط سابقة. راجع InvoicesService.createInvoicePublicLink.
+model InvoicePublicLink {
+  id             String    @id @default(uuid())
+  orderId        String    @unique
+  tokenHash      String    @unique
+  createdAt      DateTime  @default(now())
+  /// null = نشط. تعيينه يمنع الفتح فوراً بلا حذف الصفّ (سجلّ تدقيق بسيط)
+  revokedAt      DateTime?
+  lastAccessedAt DateTime?
+
+  order Order @relation(fields: [orderId], references: [id])
+}
+
+// ===================== الكوبونات =====================
+
+enum CouponType {
+  PERCENT
+  FIXED
+}
+
+/// كوبون خصم تصدره المنصة.
+///
+/// **قيمة الخصم تتحمّلها الوكالة**: الزبون يدفع نقداً أقل للسائق، وعمولة
+/// المنصة تُخصم كاملة كما هي. لذلك يظهر الخصم صراحةً على الطلب للوكالة
+/// وللسائق — وإلا بدا نقص الكاش خطأً في التحصيل لا خصماً مقصوداً.
+///
+/// النطاق بالمدن فقط لا بالوكالات: الوكالة تُسنَد بعد إنشاء الطلب، والخصم
+/// يُحسب لحظة الإنشاء ليراه الزبون قبل التأكيد — فشرطٌ على وكالة لم تُعرف
+/// بعدُ لا يمكن التحقق منه.
+model Coupon {
+  id            String     @id @default(uuid())
+  /// يُخزَّن دائماً بأحرف كبيرة بلا مسافات — المطابقة عند الطلب حساسة للحالة
+  code          String     @unique
+  descAr        String?
+  type          CouponType
+  /// نسبة مئوية (1..100) أو مبلغ ثابت بالدينار — حسب type
+  value         Decimal    @db.Decimal(10, 2)
+  /// سقف الخصم للنسبة المئوية: بلا سقف تبتلع 20% طلباً كبيراً بلا حدّ
+  maxDiscount   Decimal?   @db.Decimal(10, 2)
+  /// أدنى إجمالي (غاز + عمولة) يقبل الكوبون
+  minOrderTotal Decimal?   @db.Decimal(10, 2)
+  startsAt      DateTime?
+  endsAt        DateTime?
+  /// سقف الاستخدام الكلي وسقف كل زبون — null = بلا سقف
+  usageLimit    Int?
+  perUserLimit  Int?
+  /// عدّاد يُزاد بشرطٍ ذرّي. العدّ من جدول الاستخدامات وقت الطلب كان يسمح
+  /// لطلبين متزامنين بتجاوز السقف معاً — كلاهما يقرأ العدد قبل أن يكتب الآخر.
+  usedCount     Int        @default(0)
+  active        Boolean    @default(true)
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+
+  cities      CouponCity[]
+  redemptions CouponRedemption[]
+
+  @@index([active, endsAt])
+}
+
+/// حصر الكوبون بمدن بعينها — لا صفوف هنا يعني: كل المدن
+model CouponCity {
+  couponId String
+  cityId   String
+
+  coupon Coupon @relation(fields: [couponId], references: [id], onDelete: Cascade)
+  city   City   @relation(fields: [cityId], references: [id])
+
+  @@id([couponId, cityId])
+  @@index([cityId])
+}
+
+/// استخدام واحد للكوبون على طلب واحد.
+model CouponRedemption {
+  id         String   @id @default(uuid())
+  couponId   String
+  customerId String
+  orderId    String   @unique
+  /// قيمة الخصم الفعلية — تبقى صحيحة ولو عُدّلت قيمة الكوبون لاحقاً
+  amount     Decimal  @db.Decimal(10, 2)
+  /// ترتيب استخدام هذا الزبون لهذا الكوبون (1، 2، ...). الفهرس الفريد عليه
+  /// هو ما يجعل سقف «لكل زبون» ذرّياً: طلبان متزامنان يحسبان الرقم نفسه،
+  /// فينجح أحدهما ويسقط الآخر على القيد بدل أن يمرّا معاً.
+  userSeq    Int
+  createdAt  DateTime @default(now())
+
+  coupon   Coupon @relation(fields: [couponId], references: [id])
+  customer User   @relation(fields: [customerId], references: [id])
+  order    Order  @relation(fields: [orderId], references: [id])
+
+  @@unique([couponId, customerId, userSeq])
+  @@index([couponId, createdAt])
+  @@index([customerId])
+}
+
+// ===================== الإشعارات =====================
+
+model Notification {
+  id        String    @id @default(uuid())
+  userId    String
+  type      String
+  titleAr   String
+  bodyAr    String
+  data      Json?
+  readAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId, createdAt])
+}
+
+model DeviceToken {
+  id         String         @id @default(uuid())
+  userId     String
+  token      String         @unique
+  platform   DevicePlatform
+  /// التطبيق صاحب هذا التوكن — يفصل إشعارات السائق عن إشعارات الزبون حين
+  /// يكونان حساباً واحداً. الافتراضي CUSTOMER: التوكنات القائمة قبل هذا
+  /// الحقل أكثرها من تطبيق الزبون، وتطبيق السائق يُعيد التسجيل عند أول
+  /// إقلاع فيصحّح نفسه.
+  app        DeviceApp      @default(CUSTOMER)
+  lastSeenAt DateTime       @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([userId, app])
+}
+
+/// تفضيلات الإشعارات لكل مستخدم. الغياب = كل شيء مفعّل، فلا حاجة لصف
+/// لكل مستخدم قديم. `enabled` مفتاح رئيسي يعلو على الفئات.
+///
+/// ملاحظة مهمة: هذه تحكم **سجل الإشعارات** فقط. إيقاف فئة العروض لا يمنع
+/// وصول عرض التوصيل نفسه — إيقاف العمل يكون بحالة السائق (غير متصل)،
+/// وإلا لصمت النظام عن سائق يظن نفسه متاحاً.
+model NotificationPreference {
+  userId    String   @id
+  enabled   Boolean  @default(true)
+  offers    Boolean  @default(true)
+  orders    Boolean  @default(true)
+  system    Boolean  @default(true)
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+enum AppTarget {
+  CUSTOMER
+  DRIVER
+}
+
+/// حساب مراجعة المتجر — صفّ لكل تطبيق (app مفتاح أساسي)، فالإدارة upsert.
+///
+/// مراجِع App Store أو Google Play في كاليفورنيا لا يستلم رمز واتساب يُرسَل
+/// إلى رقم أردني، ورفض «تعذّر تسجيل الدخول» (Guideline 2.1) نتيجةٌ شبه
+/// مؤكدة بلا هذا الباب. فبدل تعطيل التحقق كله (كما يفعل AUTH_DEV_LOGIN الذي
+/// يقبل *أي* رقم) نفتح رقماً واحداً بعينه لكل تطبيق.
+///
+/// كان هذا سابقاً في متغيّرَي البيئة APPLE_REVIEW_PHONE/APPLE_REVIEW_OTP —
+/// رقماً واحداً للتطبيقين، وإغلاقه يتطلب لمس Railway. نُقل إلى هنا ليملك
+/// الأدمن إغلاقه بضغطة من اللوحة فور قبول التطبيق، وهو ما يُغلق فعلاً:
+/// باب مفتوح بعد المراجعة أخطر من غيابه أصلاً.
+/// قناة إيصال رمز التحقق. الاسم يخصّ الوسيلة لا المزوّد: تبديل بوابة واتساب
+/// من OpenWA إلى غيرها لا يغيّر أن القناة «واتساب».
+enum OtpChannel {
+  /// بوابة OpenWA ذاتية الاستضافة — جلسة Baileys
+  OPENWA
+  /// واتساب الرسمي من Meta (Cloud API)
+  META_WHATSAPP
+  /// بريد إلكتروني
+  EMAIL
+}
+
+/// القناة الافتراضية للنظام كله — صفّ واحد (id = 1) مثل DispatchSettings.
+///
+/// لماذا في القاعدة لا في متغيّر بيئة: التبديل يجب أن يسري **في اللحظة** على
+/// كل من يطلب رمزاً بعده، ومتغيّر البيئة يحتاج إعادة نشر — وهي الدقائق التي
+/// تكون فيها البوابة معطّلة ولا أحد يستطيع الدخول. القراءة تتم عند كل إرسال،
+/// فلا ذاكرة وسيطة تُبقي القيمة القديمة حيّة بعد التبديل.
+model OtpChannelSettings {
+  id        Int        @id @default(1)
+  channel   OtpChannel @default(OPENWA)
+  /// رقم واتساب الذي يراسله الزبون في مصافحة التحقق — رقم الجلسة المتصلة
+  /// بالبوابة نفسه، بصيغة دولية (+9627XXXXXXXX).
+  ///
+  /// **في القاعدة لا في متغيّر بيئة**: كان `WHATSAPP_GATEWAY_NUMBER`، فضُبط
+  /// مرة بـ«+962» وحدها — رمز الدولة بلا رقم — فبُني رابط `wa.me/962` يفتح
+  /// واتساب على «لا حساب لهذا الرقم». تعديله كان يحتاج نشراً وإعادة تشغيل،
+  /// ولا شيء في اللوحة يكشف قيمته. هنا يراه الأدمن ويصحّحه في ثانية.
+  ///
+  /// فارغ = مسار المصافحة معطَّل ويعمل الإرسال المباشر كما كان.
+  waGatewayNumber String?
+  updatedAt DateTime   @updatedAt
+  updatedBy String?
+
+  editor User? @relation("OtpChannelEditor", fields: [updatedBy], references: [id], onDelete: SetNull)
+}
+
+/// استثناء لرقم بعينه — يسبق القناة العامة.
+///
+/// **المفتاح رقم الهاتف لا الحساب**: الرمز يُطلب أحياناً قبل أن يوجد حساب
+/// أصلاً (أول دخول)، فربطه بـuserId كان يجعل الاستثناء بلا أثر حيث يُحتاج
+/// أكثر — على الرقم الذي لا تصله الرسائل فلا يتمكّن صاحبه من التسجيل.
+model OtpChannelOverride {
+  phone     String     @id
+  channel   OtpChannel
+  /// بريد يُرسل إليه حين تكون القناة EMAIL ولا بريد على الحساب (أو لا حساب
+  /// بعد). فارغ = يُؤخذ بريد الحساب، وإن غاب يسقط الإرسال إلى القناة العامة.
+  email     String?
+  /// لماذا استُثني — يُقرأ بعد شهور حين يسأل أحد عن سبب اختلاف هذا الرقم
+  note      String?
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+  updatedBy String?
+
+  editor User? @relation("OtpOverrideEditor", fields: [updatedBy], references: [id], onDelete: SetNull)
+}
+
+model ReviewAccountConfig {
+  app AppTarget @id
+
+  /// المفتاح الفعلي — false يُلغي الباب كلياً بصرف النظر عن بقية الحقول
+  enabled Boolean @default(false)
+
+  /// رقم المراجِع بصيغة أردنية (يُطبَّع قبل المقارنة مثل أي رقم)
+  phone String
+
+  /// رمز ثابت من ٦ خانات فأكثر. فارغ + requireCode=false يعني دخولاً بلا
+  /// رمز إطلاقاً؛ أما requireCode=true برمز أقصر من ٦ فيُرفض في الخدمة —
+  /// رمز قصير يُخمَّن بالقوة الغاشمة مهما ضاق حدّ المحاولات.
+  code String?
+
+  /// هل يُطلب الرمز؟ false = يدخل الرقم ويفوت مباشرة. الأدمن يقرر، لأن
+  /// بعض المراجعات تتعثّر بأي خطوة إضافية وبعضها لا.
+  requireCode Boolean @default(true)
+
+  /// من عدّله وآخر مرة — باب أمني، فمن فتحه يجب أن يكون معروفاً
+  updatedAt       DateTime @updatedAt
+  updatedByUserId String?
+
+  updatedBy User? @relation("ReviewAccountEditor", fields: [updatedByUserId], references: [id])
+}
+
+/// حدّ أدنى لنسخة التطبيق (semver منقوط، مقارنة رقمية لا نصية). أقل منه
+/// يُحجب المستخدم بشاشة تحديث إجباري حتى يحدّث — صفّ واحد لكل تطبيق
+/// (app مفتاح أساسي)، فالإدارة من اللوحة upsert دائماً.
+model AppVersionConfig {
+  app             AppTarget @id
+  /// مفتاح التفعيل الفعلي — false يوقف الإجبار كلياً بصرف النظر عن minVersion،
+  /// فيستطيع الأدمن تجهيز الحد الأدنى مسبقاً دون تفعيله فوراً
+  enabled         Boolean   @default(true)
+  minVersion      String
+  updateMessageAr String    @default("يتوفر تحديث جديد للتطبيق — يجب التحديث للمتابعة")
+  /// رابط متجر التطبيقات أو صفحة التحميل — يفتحه زر «تحديث الآن»
+  downloadUrl     String?
+  updatedAt       DateTime  @updatedAt
+}
+
+// ===================== العمليات =====================
+
+model AuditLog {
+  id          String   @id @default(uuid())
+  actorUserId String
+  action      String
+  entityType  String
+  entityId    String
+  oldValue    Json?
+  newValue    Json?
+  ip          String?
+  createdAt   DateTime @default(now())
+
+  actor User @relation("Actor", fields: [actorUserId], references: [id])
+
+  @@index([entityType, entityId])
+  @@index([actorUserId, createdAt])
+}
+
+model SupportTicket {
+  id                 String         @id @default(uuid())
+  code               String         @unique
+  type               String
+  status             TicketStatus   @default(OPEN)
+  priority           TicketPriority @default(NORMAL)
+  subjectAr          String
+  createdByUserId    String?
+  orderId            String?
+  agencyId           String?
+  assignedToUserId   String?
+  // { "<chatId>": <messageId> } لكل أدمن — لتحديث بطاقة التذكرة عنده
+  // (الحالة والأزرار) بعد كل إجراء بدل إرسال رسالة جديدة في كل مرة.
+  telegramMessageIds Json?
+  // { "<chatId>": [<messageId>, ...] } — كل رسالة أُرسلت للأدمن عن هذه
+  // التذكرة (البطاقة ورسائل المتابعة)، ليُحَل الرد على أيٍّ منها إلى
+  // التذكرة نفسها. بدونها كان الرد لا يعمل إلا على البطاقة الأولى.
+  telegramReplyIds   Json?
+  createdAt          DateTime       @default(now())
+  resolvedAt         DateTime?
+
+  createdBy  User?           @relation("TicketCreator", fields: [createdByUserId], references: [id])
+  order      Order?          @relation(fields: [orderId], references: [id])
+  agency     Agency?         @relation(fields: [agencyId], references: [id])
+  assignedTo User?           @relation("TicketAssignee", fields: [assignedToUserId], references: [id])
+  messages   TicketMessage[]
+
+  @@index([status, priority])
+  @@index([assignedToUserId, status])
+}
+
+model TicketMessage {
+  id           String   @id @default(uuid())
+  ticketId     String
+  authorUserId String
+  bodyAr       String
+  /// اسم من ردّ كما يُعرض — منفصلٌ عن النص ليصير إظهاره قراراً يُبدَّل من
+  /// اللوحة. كان يُخبز داخل `bodyAr` (‏«[الدعم — فلان]: …»‏) فيظهر أبداً بلا
+  /// طريق لإخفائه. فارغ في رسائل الزبون، وفي الرسائل التي سبقت هذا الحقل.
+  ///
+  /// لا يُشتق من `author` لأن ردّ تيليجرام يُنسب لموظف بديل — الأدمن هناك
+  /// بلا حساب منصة — فاسم الحساب ليس اسم من ردّ فعلاً.
+  agentLabel   String?
+  createdAt    DateTime @default(now())
+
+  ticket SupportTicket @relation(fields: [ticketId], references: [id])
+  author User          @relation(fields: [authorUserId], references: [id])
+
+  @@index([ticketId])
+}
+
+// ============================================================================
+// وحدة الوكالات المحتملة والتواصل معها (Agency Leads & Outreach)
+// ============================================================================
+// **لماذا جدول منفصل عن Agency؟** `Agency` كيان تشغيلي: له `cityId` و`phone`
+// إلزاميان، ومحفظة وسائقون وتغطية وطلبات وفواتير اشتراك، ويُقرأ في كل دورة
+// توزيع. أمّا هذا فسجلّ عميلٍ محتمل قد لا نملك عنه رقماً ولا موقعاً، ولا يعني
+// وجوده هنا شيئاً عن علاقته بـGasGO. خلطهما يعني قيوداً تنكسر عند الاستيراد،
+// وحالتَي اعتماد متنافستين على صفٍّ واحد، واستعلامات توزيع تمشي فوق آلاف
+// السجلات الباردة.
+//
+// الجسر بينهما `AgencyLead.agencyId`: يُملأ لحظة تحوّل العميل المحتمل إلى
+// وكالة عاملة فعلاً. قبل ذلك يبقى null.
+
+/// حالة الترخيص — **مستقلة تماماً عن اعتماد GasGO**. غياب المعلومة ليس دليل
+/// غياب الترخيص: بلا مصدر موثوق تبقى UNKNOWN، لا UNLICENSED.
+enum LeadLicenseStatus {
+  UNKNOWN
+  LICENSED
+  UNLICENSED
+  PENDING_VERIFICATION
+}
+
+/// اعتماد GasGO. كل مستورَد يبدأ PENDING_REVIEW بلا استثناء — الوجود في
+/// قاعدة البيانات ليس اعتماداً، والاعتماد قرار إداري بشري.
+enum LeadApprovalStatus {
+  PENDING_REVIEW
+  APPROVED
+  REJECTED
+  SUSPENDED
+  DELETED
+}
+
+enum LeadSourceType {
+  GOOGLE_MAPS
+  OFFICIAL_WEBSITE
+  FACEBOOK
+  INSTAGRAM
+  PUBLIC_DIRECTORY
+  GOVERNMENT_SOURCE
+  MANUAL
+  /// الوكالة سجّلت نفسها من نموذج التقديم العام. يُميَّز عن MANUAL لأن
+  /// مصدره صاحب العمل نفسه لا موظفٌ عندنا: بياناته أدقّ في الغالب وأجدر
+  /// بالتصديق، لكنه **غير مُتحقَّق منه** ولا يثبت ترخيصاً بحال.
+  SELF_REGISTRATION
+  OTHER
+}
+
+/// موافقة التواصل التسويقي. **رقم منشور علناً ليس موافقة** — يبقى UNKNOWN
+/// حتى يوافق صاحبه صراحة. وOPTED_OUT نهائي: لا تُرسَل إليه حملة أبداً.
+enum WhatsAppOptInStatus {
+  UNKNOWN
+  OPTED_IN
+  OPTED_OUT
+}
+
+enum LeadContactStatus {
+  NOT_CONTACTED
+  CONTACTED
+  CONTACT_FAILED
+}
+
+enum LeadResponseStatus {
+  NO_RESPONSE
+  RESPONDED
+  INTERESTED
+  NOT_INTERESTED
+}
+
+enum OutreachChannel {
+  WHATSAPP
+  PHONE
+  SMS
+  EMAIL
+}
+
+enum OutreachContactType {
+  INITIAL_OUTREACH
+  FOLLOW_UP
+  MANUAL_CONTACT
+  SUPPORT
+}
+
+enum CampaignStatus {
+  DRAFT
+  SCHEDULED
+  QUEUED
+  RUNNING
+  PAUSED
+  COMPLETED
+  CANCELLED
+  FAILED
+}
+
+enum CampaignAudienceType {
+  // وكالات محتملة
+  ALL_LEADS
+  PENDING_REVIEW_ONLY
+  APPROVED_ONLY
+  BY_AREA
+  MANUAL_SELECTION
+  // مستخدمو المنصة — أرقامٌ أُعطيت لاستعمال الخدمة لا للتسويق، فتخضع
+  // لقائمة المنع العامة كغيرها، وتُستهدف بفئتها لا جملةً بلا تمييز
+  CUSTOMERS
+  DRIVERS
+  AGENCY_STAFF
+  PLATFORM_STAFF
+  ALL_USERS
+  // قائمة يبنيها الأدمن بنفسه (أرقام ملصوقة، أو وكالات/مستخدمون مختارون)
+  CUSTOM_LIST
+}
+
+/// نوع المستلم في الحملة — سجلٌّ محتمل، أو مستخدم مسجَّل، أو رقم من قائمة
+enum RecipientKind {
+  LEAD
+  USER
+  LIST_MEMBER
+}
+
+enum RecipientStatus {
+  PENDING
+  QUEUED
+  SENDING
+  SENT
+  DELIVERED
+  READ
+  FAILED
+  REPLIED
+  OPTED_OUT
+  SKIPPED
+}
+
+enum WaDirection {
+  OUTBOUND
+  INBOUND
+}
+
+enum WaMessageType {
+  TEXT
+  IMAGE
+  DOCUMENT
+  INTERACTIVE
+  TEMPLATE
+}
+
+enum WaMessageStatus {
+  PENDING
+  SENT
+  DELIVERED
+  READ
+  FAILED
+  RECEIVED
+}
+
+enum LeadImportStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+  PARTIAL
+}
+
+/// وكالة غاز محتملة — من استيراد أو إدخال يدوي أو مصدر عام.
+///
+/// كل الحقول الوصفية اختيارية عمداً: البيانات العامة ناقصة بطبيعتها، واختراع
+/// ما ينقص أسوأ من تركه فارغاً (رقمٌ مخترع يعني رسالة إلى إنسان لا علاقة له
+/// بنا). القاعدة: ما لا نعرفه يبقى null.
+model AgencyLead {
+  id String @id @default(uuid())
+
+  name         String
+  businessName String?
+
+  phoneNumber            String?
+  whatsappNumber         String?
+  alternativePhoneNumber String?
+
+  /// المنطقة الإدارية من جغرافيا المنصة القائمة (District). الاسم الحر
+  /// `areaName` يبقى بجانبه لأن المستورَد يحمل نصاً قد لا يطابق أي منطقة
+  /// مسجّلة — نحفظ ما ورد ولا نجبره على قائمتنا.
+  areaId       String?
+  areaName     String?
+  neighborhood String?
+  address      String?
+
+  latitude  Float?
+  longitude Float?
+
+  licenseStatus     LeadLicenseStatus @default(UNKNOWN)
+  licenseNumber     String?
+  licenseSource     String?
+  licenseVerifiedAt DateTime?
+
+  approvalStatus  LeadApprovalStatus @default(PENDING_REVIEW)
+  approvedAt      DateTime?
+  approvedById    String?
+  rejectionReason String?
+
+  dataSource LeadSourceType @default(MANUAL)
+  sourceUrl  String?
+
+  whatsappAvailable   Boolean             @default(false)
+  whatsappOptInStatus WhatsAppOptInStatus @default(UNKNOWN)
+
+  contactStatus  LeadContactStatus  @default(NOT_CONTACTED)
+  responseStatus LeadResponseStatus @default(NO_RESPONSE)
+
+  interested Boolean @default(false)
+  registered Boolean @default(false)
+
+  firstContactAt DateTime?
+  lastContactAt  DateTime?
+  lastResponseAt DateTime?
+
+  /// «لا تتواصل معي» — أعلى من كل شيء آخر. يُفحص قبل أي إرسال، ولا تلغيه
+  /// حملة ولا استيراد لاحق ولا تحديث من مصدر خارجي.
+  doNotContact   Boolean   @default(false)
+  doNotContactAt DateTime?
+
+  notes String?
+
+  /// الوكالة التشغيلية إن تحوّل هذا العميل المحتمل إلى وكالة عاملة فعلاً
+  agencyId String? @unique
+
+  /// دفعة الاستيراد التي جاء منها — أثرٌ يسمح بمراجعة دفعة كاملة
+  importId String?
+
+  /// متى قدّمت الوكالة طلبها بنفسها عبر النموذج العام. وجوده يميّز طلباً
+  /// جاء من صاحب العمل عن سجلٍّ جمعناه نحن عنه — والفرق يهمّ المراجع: من
+  /// طرق البابَ بنفسه ينتظر رداً، ومن أدرجناه لا يعلم بنا أصلاً.
+  appliedAt DateTime?
+
+  /// ما كتبه مقدّم الطلب عن نفسه، كما كتبه. يبقى منفصلاً عن `notes`
+  /// الإدارية فلا يختلط كلام صاحب العمل بملاحظات موظفينا عليه.
+  applicantNote String?
+
+  /// تطابق غير مؤكد مع سجل آخر. لا يُدمَج تلقائياً: الدمج الخاطئ يخلط وكالتين
+  /// حقيقيتين بلا رجعة، فيُعرَض على الأدمن ويبقى الصفّان قائمين حتى يقرر.
+  possibleDuplicateOfId String?
+  duplicateReviewedAt   DateTime?
+
+  /// حذف ناعم — السجل لا يُمحى فعلياً أبداً (approvalStatus = DELETED معه)
+  deletedAt   DateTime?
+  deletedById String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  area                District?               @relation(fields: [areaId], references: [id])
+  agency              Agency?                 @relation(fields: [agencyId], references: [id])
+  import              AgencyLeadImport?       @relation(fields: [importId], references: [id])
+  possibleDuplicateOf AgencyLead?             @relation("LeadDuplicates", fields: [possibleDuplicateOfId], references: [id])
+  duplicates          AgencyLead[]            @relation("LeadDuplicates")
+  approvedBy          User?                   @relation("LeadApprover", fields: [approvedById], references: [id])
+  deletedBy           User?                   @relation("LeadDeleter", fields: [deletedById], references: [id])
+  approvalHistory     AgencyApprovalHistory[]
+  dataSources         AgencyDataSource[]
+  whatsappContacts    AgencyWhatsAppContact[]
+  outreach            AgencyOutreach[]
+  recipients          CampaignRecipient[]
+  messages            WhatsAppMessage[]
+
+  @@index([phoneNumber])
+  @@index([whatsappNumber])
+  @@index([areaId])
+  @@index([licenseStatus])
+  @@index([approvalStatus])
+  @@index([doNotContact])
+  @@index([licenseNumber])
+  @@index([deletedAt])
+  @@index([appliedAt])
+}
+
+/// سجلّ كل تغيير في اعتماد GasGO — من غيّر، ومن أي حالة إلى أي حالة، ولماذا.
+/// الرفض والإيقاف يوجبان سبباً: قرارٌ بلا سبب لا يمكن مراجعته لاحقاً.
+model AgencyApprovalHistory {
+  id     String @id @default(uuid())
+  leadId String
+
+  oldStatus LeadApprovalStatus
+  newStatus LeadApprovalStatus
+
+  reason String?
+
+  changedById String
+  changedAt   DateTime @default(now())
+
+  lead      AgencyLead @relation(fields: [leadId], references: [id])
+  changedBy User       @relation("LeadStatusChanger", fields: [changedById], references: [id])
+
+  @@index([leadId, changedAt])
+}
+
+/// مصادر البيانات — متعددة للسجل الواحد عمداً: نفس الوكالة قد ترد من خرائط
+/// جوجل وصفحة فيسبوك ودليل عام، ولكل مصدر ما يميّزه. لا يُخترع رابط أبداً.
+model AgencyDataSource {
+  id     String @id @default(uuid())
+  leadId String
+
+  sourceType LeadSourceType
+  sourceName String?
+  sourceUrl  String?
+
+  /// معرّف السجل لدى المصدر (place_id مثلاً) — أقوى مفاتيح كشف التكرار
+  externalId String?
+
+  collectedAt DateTime  @default(now())
+  verifiedAt  DateTime?
+
+  isPrimarySource Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  lead AgencyLead @relation(fields: [leadId], references: [id])
+
+  @@unique([sourceType, externalId])
+  @@index([leadId])
+}
+
+/// أرقام واتساب العميل المحتمل وحالة موافقته على كل رقم.
+model AgencyWhatsAppContact {
+  id     String @id @default(uuid())
+  leadId String
+
+  phoneNumber String
+
+  isPrimary   Boolean @default(false)
+  /// رقم أردني محمول صالح شكلياً (toJordanE164) — الأرضي لا يحمل واتساب
+  isValid     Boolean @default(false)
+  /// أكّدت البوابة أن للرقم حساب واتساب فعلاً
+  isAvailable Boolean @default(false)
+
+  optInStatus WhatsAppOptInStatus @default(UNKNOWN)
+  optInSource String?
+  optedInAt   DateTime?
+  optedOutAt  DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  lead AgencyLead @relation(fields: [leadId], references: [id])
+
+  @@unique([leadId, phoneNumber])
+  @@index([phoneNumber])
+  @@index([optInStatus])
+}
+
+/// سجلّ التواصل — كل محاولة اتصال بأي قناة، آلية كانت أو يدوية.
+model AgencyOutreach {
+  id     String @id @default(uuid())
+  leadId String
+
+  channel     OutreachChannel
+  contactType OutreachContactType
+
+  phoneNumber String?
+
+  campaignId String?
+  messageId  String?
+
+  status String?
+
+  contactedAt DateTime  @default(now())
+  respondedAt DateTime?
+
+  notes String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  lead     AgencyLead        @relation(fields: [leadId], references: [id])
+  campaign WhatsAppCampaign? @relation(fields: [campaignId], references: [id])
+
+  @@index([leadId, contactedAt])
+  @@index([campaignId])
+}
+
+/// حملة تواصل عبر واتساب. العدّادات مخزَّنة لا محسوبة: لوحة تعرض حملة فيها
+/// آلاف المستلمين لا تحتمل COUNT على كل حالة مع كل تحديث.
+model WhatsAppCampaign {
+  id String @id @default(uuid())
+
+  name        String
+  description String?
+
+  /// اسم القالب ونصّه. بوابة OpenWA ترسل نصاً حراً (لا قوالب Meta معتمدة)،
+  /// فالقالب هنا نصّنا نحن بمتغيّراته — والاسم للتوثيق والتمييز.
+  templateName     String
+  templateLanguage String @default("ar")
+  templateBody     String
+
+  status CampaignStatus @default(DRAFT)
+
+  audienceType CampaignAudienceType @default(PENDING_REVIEW_ONLY)
+  areaId       String?
+  /// لجمهور CUSTOM_LIST
+  listId       String?
+
+  /// قالب Meta المعتمد. Cloud API لا تقبل نصّاً حرّاً كأول رسالة إلى من لم
+  /// يراسلك — تقبل قالباً اعتُمد مسبقاً وحده. `templateBody` يبقى للمعاينة
+  /// وللإرسال عبر OpenWA، وهذه الحقول تُستعمل حين تكون القناة Meta.
+  metaTemplateName   String?
+  metaTemplateLang   String   @default("ar")
+  /// أسماء المتغيّرات بالترتيب — تقابل {{1}} و{{2}} في القالب المعتمد.
+  /// الترتيب عقدٌ لا تفصيل: تبديله بعد الاعتماد يقلب الأسماء والمناطق في
+  /// رسائل تصل إلى ناس حقيقيين.
+  metaTemplateParams String[] @default([])
+
+  totalRecipients Int @default(0)
+  queuedCount     Int @default(0)
+  sendingCount    Int @default(0)
+  sentCount       Int @default(0)
+  deliveredCount  Int @default(0)
+  readCount       Int @default(0)
+  failedCount     Int @default(0)
+  repliedCount    Int @default(0)
+  optedOutCount   Int @default(0)
+  skippedCount    Int @default(0)
+
+  createdById String
+
+  scheduledAt DateTime?
+  startedAt   DateTime?
+  completedAt DateTime?
+  cancelledAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  createdBy  User                @relation("CampaignCreator", fields: [createdById], references: [id])
+  area       District?           @relation(fields: [areaId], references: [id])
+  list       RecipientList?      @relation(fields: [listId], references: [id])
+  recipients CampaignRecipient[]
+  messages   WhatsAppMessage[]
+  outreach   AgencyOutreach[]
+
+  @@index([status])
+  @@index([createdAt])
+}
+
+/// مستلم واحد في حملة. القيد الفريد (campaignId, leadId) هو ما يمنع الإرسال
+/// المزدوج فعلياً: استئناف حملة أو ضغط «ابدأ» مرتين لا ينشئ صفاً ثانياً،
+/// فلا مهمة ثانية ولا رسالة ثانية.
+model CampaignRecipient {
+  id String @id @default(uuid())
+
+  campaignId String
+
+  kind         RecipientKind @default(LEAD)
+  /// أحدها يُملأ حسب `kind` — والرقم يبقى المفتاح الفعلي في كل الحالات
+  leadId       String?
+  userId       String?
+  listMemberId String?
+
+  phoneNumber String
+
+  status RecipientStatus @default(PENDING)
+
+  messageId String?
+
+  queuedAt    DateTime?
+  sentAt      DateTime?
+  deliveredAt DateTime?
+  readAt      DateTime?
+  failedAt    DateTime?
+  repliedAt   DateTime?
+
+  failureCode   String?
+  failureReason String?
+
+  attempts Int @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  campaign   WhatsAppCampaign     @relation(fields: [campaignId], references: [id])
+  lead       AgencyLead?          @relation(fields: [leadId], references: [id])
+  user       User?                @relation("CampaignRecipientUser", fields: [userId], references: [id])
+  listMember RecipientListMember? @relation(fields: [listMemberId], references: [id])
+  messages   WhatsAppMessage[]
+
+  /// المفتاح على الرقم لا على المستلم.
+  ///
+  /// `leadId` صار اختيارياً، وPostgres يعتبر كل NULL مختلفاً عن غيره — فقيدٌ
+  /// على (campaignId, leadId) يسمح بألف مستلم مستخدم في الحملة نفسها. والرقم
+  /// أصحّ منطقياً على أي حال: وكالةٌ محتملة ومستخدمٌ مسجَّل قد يتقاسمان رقماً،
+  /// وصاحبه إنسان واحد لا يُرسل إليه مرتين.
+  @@unique([campaignId, phoneNumber])
+  @@index([campaignId, status])
+  @@index([leadId])
+  @@index([userId])
+  @@index([status])
+}
+
+/// رسالة واتساب واحدة، صادرة أو واردة.
+model WhatsAppMessage {
+  id String @id @default(uuid())
+
+  leadId      String?
+  campaignId  String?
+  recipientId String?
+
+  phoneNumber String
+
+  direction   WaDirection
+  messageType WaMessageType @default(TEXT)
+
+  templateName     String?
+  templateLanguage String?
+
+  body String?
+
+  /// معرّف الرسالة لدى البوابة — مفتاح ربط أحداث الحالة اللاحقة بها.
+  /// فريد حين يوجد: الحدث نفسه قد يصل مرتين، والقيد يجعل المعالجة idempotent.
+  externalMessageId String? @unique
+
+  status WaMessageStatus @default(PENDING)
+
+  errorCode    String?
+  errorMessage String?
+
+  sentAt      DateTime?
+  deliveredAt DateTime?
+  readAt      DateTime?
+  failedAt    DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  lead      AgencyLead?        @relation(fields: [leadId], references: [id])
+  campaign  WhatsAppCampaign?  @relation(fields: [campaignId], references: [id])
+  recipient CampaignRecipient? @relation(fields: [recipientId], references: [id])
+
+  @@index([campaignId])
+  @@index([leadId])
+  @@index([status])
+  @@index([phoneNumber, createdAt])
+}
+
+/// دفعة استيراد. **الاستيراد لا يرسل شيئاً أبداً** — ينتهي عند PENDING_REVIEW.
+model AgencyLeadImport {
+  id String @id @default(uuid())
+
+  fileName String?
+  status   LeadImportStatus @default(PENDING)
+
+  totalRows  Int @default(0)
+  created    Int @default(0)
+  updated    Int @default(0)
+  duplicates Int @default(0)
+  skipped    Int @default(0)
+  errors     Int @default(0)
+
+  /// أسطر الأخطاء بتفاصيلها — رقم السطر والسبب، ليُصحَّح الملف لا ليُخمَّن
+  errorLog Json?
+
+  startedById String
+  startedAt   DateTime  @default(now())
+  completedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  startedBy User         @relation("ImportStarter", fields: [startedById], references: [id])
+  leads     AgencyLead[]
+
+  @@index([status, createdAt])
+}
+
+/// دعوة أصحاب الوكالات داخل التطبيقين — «هل أنت صاحب وكالة؟ تواصل الآن».
+///
+/// الرابط يضبطه الأدمن من اللوحة لا الكود: وجهته تتغيّر (نموذج التسجيل،
+/// واتساب، صفحة تعريفية) وربطها ببناء تطبيق يعني إصدار نسخة جديدة على المتجر
+/// لتغيير رابط.
+///
+/// صفٌّ لكل تطبيق لأن الجمهور مختلف: سائقٌ يفكّر في فتح وكالة ليس كزبون
+/// يشتري أسطوانة، ولكلٍّ نصّه — وربما تُفعَّل في أحدهما دون الآخر.
+model AgencyCtaConfig {
+  app AppTarget @id
+
+  /// مطفأة افتراضياً: بطاقة تظهر في تطبيق حيّ قرارٌ يُتخذ لا يقع تلقائياً
+  enabled Boolean @default(false)
+  titleAr String  @default("هل أنت صاحب وكالة غاز؟")
+  bodyAr  String  @default("انضم إلى GasGO ووصّل طلبات منطقتك")
+  ctaAr   String  @default("تواصل الآن")
+
+  /// وجهة الزر. بلا رابط لا تظهر البطاقة مهما كانت `enabled` — بطاقة
+  /// دعوةٍ لا تفتح شيئاً أسوأ من غيابها.
+  url String?
+
+  updatedAt DateTime @updatedAt
+}
+
+/// **قائمة المنع العامة** — الرقم لا الشخص.
+///
+/// كانت الموافقة تعيش على `AgencyWhatsAppContact`، أي على رقمٍ داخل سجلّ
+/// وكالة محتملة. وما إن صارت الحملات تصل مستخدمي المنصة وقوائم أرقام ملصوقة
+/// حتى بطل ذلك: من ردّ «إلغاء» على رسالة حملة قد لا يكون له سجل وكالة أصلاً،
+/// وانسحابه يجب أن يسري على كل ما يُرسَل إلى رقمه لاحقاً مهما كان مصدره.
+///
+/// فصارت هذه هي المرجع الأعلى: تُفحص قبل كل إرسال، لكل نوع مستلم، وقبل أي
+/// اعتبار آخر. الدخول إليها فوري (ردّ «إلغاء» لا ينتظر مراجعة)، والخروج منها
+/// فعلٌ بشري صريح.
+model WhatsAppOptOut {
+  id String @id @default(uuid())
+
+  /// مطبَّع بصيغة +962… — الرقم هو الهوية هنا، لا المستخدم ولا الوكالة
+  phoneNumber String @unique
+
+  /// كيف انسحب: ردّ وارد، طلب هاتفي، قرار إداري
+  source String
+  reason String?
+
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+}
+
+/// قائمة مستلمين يبنيها الأدمن — أرقام ملصوقة، أو وكالات/مستخدمون مختارون.
+///
+/// وجودها أن الجمهور لا ينحصر دائماً في فئة يعرفها النظام: «وكالات وافقت
+/// هاتفياً»، «سائقو مرج الحمام»، «أرقام معرض الغاز» — كلها مجموعات حقيقية لا
+/// يعبّر عنها فلتر.
+model RecipientList {
+  id String @id @default(uuid())
+
+  name        String
+  description String?
+
+  createdById String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  createdBy User                  @relation("RecipientListCreator", fields: [createdById], references: [id])
+  members   RecipientListMember[]
+  campaigns WhatsAppCampaign[]
+
+  @@index([createdAt])
+}
+
+model RecipientListMember {
+  id     String @id @default(uuid())
+  listId String
+
+  /// مطبَّع. هو مفتاح التفرّد داخل القائمة: لصق ألف رقم فيه تكرار لا ينتج
+  /// ألف مستلم، ورقمٌ واحد لا يصله نفس النصّ مرتين لأنه أُضيف مرتين.
+  phoneNumber String
+  /// اسم للعرض إن عُرف — من الوكالة أو المستخدم أو ما كتبه الأدمن
+  name        String?
+
+  /// أصلُ العضو إن كان معروفاً للنظام — يبقى للأثر لا للإرسال
+  leadId String?
+  userId String?
+
+  createdAt DateTime @default(now())
+
+  list       RecipientList       @relation(fields: [listId], references: [id], onDelete: Cascade)
+  recipients CampaignRecipient[]
+
+  @@unique([listId, phoneNumber])
+  @@index([phoneNumber])
+}
+
+// ===================== ملف المنشأة (Onboarding / KYC) =====================
+//
+// الوكالة تدخل المنصة بهاتف واسم؛ لكن العقد يلزم شخصاً بعينه ومنشأةً
+// مسجّلة. هذه الوحدة تجمع ما يلزم قبل توليد أي عقد: هوية المنشأة، الموقّع
+// وصفته، الوضع الضريبي، التراخيص التشغيلية، الحساب البنكي، والوثائق.
+//
+// **لماذا لا يُبنى المطلوب في الكود؟** لأن ما تفرضه الجهات يتغيّر: رقم
+// تسجيل المبيعات لا يلزم منشأةً تحت حدّ التسجيل، وقد يُستحدث ترخيص أو
+// يُلغى. لو كان «إلزامي» ثابتاً في الشيفرة لعطّل كل تغييرٍ تسجيلَ وكالات
+// حقيقية حتى ننشر إصداراً. فالكود يعرّف **ماهية** الحقل (عموده، نوعه،
+// تحققه)، والأدمن يقرّر **حالته**: مخفي أو اختياري أو إلزامي.
+
+/// حالة الحقل كما يضبطها الأدمن. HIDDEN لا يعني الحذف: القيمة المُدخلة
+/// سابقاً تبقى في القاعدة ولا تُعرض ولا تُطلب — إخفاءُ حقلٍ لا يجوز أن
+/// يمحو ما كتبته وكالة عنها.
+enum OnboardingFieldMode {
+  HIDDEN
+  OPTIONAL
+  REQUIRED
+}
+
+/// الصفة القانونية — تحكم أي الحقول تظهر ومن يحق له التوقيع
+enum AgencyEntityType {
+  /// مؤسسة فردية — سجل الأسماء التجارية، الطرف المتعاقد شخص طبيعي
+  SOLE_ESTABLISHMENT
+  /// شركة ذات مسؤولية محدودة — سجل الشركات، الطرف المتعاقد شخص اعتباري
+  LLC
+}
+
+enum OnboardingStatus {
+  /// تعبئة جارية — الوكالة تحفظ وتعود، ولا يراه المراجع بعد
+  DRAFT
+  /// أُرسل للمراجعة — يقفل التعديل على الوكالة ويظهر في طابور الأدمن
+  SUBMITTED
+  /// أعاده المراجع بملاحظات — يُفتح للتعديل ويعود للطابور بعد الإرسال
+  CHANGES_REQUESTED
+  /// اعتُمد — البوابة التي بعدها يجوز توليد العقد
+  APPROVED
+  REJECTED
+}
+
+enum OnboardingDocStatus {
+  PENDING
+  VERIFIED
+  REJECTED
+}
+
+/// حالة كل حقل/مرفق كما ضبطها الأدمن. المفتاح من كتالوج ثابت في الشيفرة
+/// (`onboarding.catalog.ts`) — القاعدة لا تخترع مفاتيح، بل تحمل قرار الأدمن
+/// في المفاتيح المعروفة وحدها. مفتاحٌ غاب صفُّه هنا يأخذ حالته الافتراضية
+/// من الكتالوج، فالجدول الفارغ نظامٌ عامل لا نظامٌ معطّل.
+model AgencyOnboardingRequirement {
+  key  String              @id
+  mode OnboardingFieldMode
+
+  /// تسمية وتلميح يكتبهما الأدمن فوق نصّ الكتالوج — لتغيير صياغة يراها
+  /// أصحاب الوكالات بلا نشر إصدار. null = نصّ الكتالوج.
+  labelAr String?
+  hintAr  String?
+
+  updatedAt   DateTime @updatedAt
+  updatedById String?
+  updatedBy   User?    @relation("OnboardingRequirementEditor", fields: [updatedById], references: [id])
+}
+
+/// ملف المنشأة — صفٌّ واحد لكل وكالة.
+///
+/// كل الحقول اختيارية في القاعدة عمداً: الإلزام قرارُ أدمنٍ يتغيّر وقت
+/// التشغيل، وتثبيته كـ`NOT NULL` يجعل كل تخفيفٍ للشروط هجرةَ قاعدة. التحقق
+/// يقع في الخدمة عند الإرسال، مقروءاً من `AgencyOnboardingRequirement`.
+model AgencyOnboarding {
+  id       String @id @default(uuid())
+  agencyId String @unique
+
+  status     OnboardingStatus  @default(DRAFT)
+  entityType AgencyEntityType?
+
+  // ---- 1) هوية المنشأة ----
+  /// الاسم كما ورد في السجل حرفياً — لا الاسم الدارج الذي تعرفه به الزبائن
+  legalNameAr             String?
+  commercialRegistryNo    String?
+  /// الرقم الوطني للمنشأة — المعرّف الموحّد الذي تُطابَق به عبر الجهات
+  nationalEstablishmentNo String?
+  registeredAt            DateTime? @db.Date
+  registryPlace           String?
+  officialEmail           String?
+
+  // ---- العنوان: موطن مختار للتبليغ القانوني، لا إحداثيات توصيل ----
+  addrGovernorate  String?
+  addrDistrict     String?
+  addrNeighborhood String?
+  addrStreet       String?
+  addrBuildingNo   String?
+  addrPostalCode   String?
+
+  // ---- 2) الموقّع ----
+  /// هل يوقّع المالك بنفسه؟ لا = يلزم سند تفويض، ويصير مرفقاً إلزامياً
+  ownerSigns  Boolean   @default(true)
+  proxyNumber String?
+  proxyDate   DateTime? @db.Date
+
+  signerName        String?
+  signerNationality String?
+  /// الرقم الوطني (١٠ خانات للأردني) أو رقم جواز/إقامة لغيره. **بيان شخصي**:
+  /// لا يخرج في أي رد عام، ولا يُسجَّل في سجلّ الأحداث.
+  signerNationalId  String?
+  signerBirthDate   DateTime? @db.Date
+  signerPhone       String?
+  /// مالك / مدير عام / مفوّض بالتوقيع
+  signerRole        String?
+
+  // ---- 3) الوضع الضريبي ----
+  taxNumber     String?
+  /// null = لم يُجب بعد. الفرق عن false مقصود: «لا» جوابٌ، والفراغ ليس جواباً.
+  vatRegistered Boolean?
+  /// رقم تسجيل ضريبة المبيعات — رقم آخر غير `taxNumber` من الدائرة نفسها
+  vatNumber     String?
+
+  // ---- 5) الحساب البنكي ----
+  bankNameAr        String?
+  bankBranch        String?
+  accountHolderName String?
+  iban              String?
+  walletAlias       String?
+
+  // ---- المراجعة ----
+  submittedAt  DateTime?
+  reviewedAt   DateTime?
+  reviewedById String?
+  /// سبب الرفض أو الملاحظات المطلوب تصحيحها — يُعرض لصاحب الوكالة كما كُتب
+  reviewNote   String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  agency     Agency                     @relation(fields: [agencyId], references: [id])
+  reviewedBy User?                      @relation("OnboardingReviewer", fields: [reviewedById], references: [id])
+  licenses   AgencyOnboardingLicense[]
+  documents  AgencyOnboardingDocument[]
+  events     AgencyOnboardingEvent[]
+
+  @@index([status, submittedAt])
+}
+
+/// ترخيص تشغيلي واحد. `key` من الكتالوج (رخصة المهن، ترخيص الطاقة،
+/// الدفاع المدني…) لا نصّاً حراً: التنبيه قبل الانتهاء يحتاج أن يعرف عن
+/// أي ترخيصٍ يتكلم.
+model AgencyOnboardingLicense {
+  id           String @id @default(uuid())
+  onboardingId String
+  key          String
+
+  number    String?
+  issuedAt  DateTime? @db.Date
+  /// تاريخ الانتهاء حقل من الدرجة الأولى لا تفصيل: عليه يقوم التنبيه قبل
+  /// ٦٠ و٣٠ و٧ أيام. وكالة برخصة منتهية تعمل على المنصة مسؤوليةٌ علينا.
+  expiresAt DateTime? @db.Date
+
+  updatedAt DateTime @updatedAt
+
+  onboarding AgencyOnboarding @relation(fields: [onboardingId], references: [id], onDelete: Cascade)
+
+  @@unique([onboardingId, key])
+  @@index([expiresAt])
+}
+
+/// وثيقة مرفوعة.
+///
+/// **البايتات هنا لا في `UploadedImage`**: ذاك يُقدَّم عبر `MediaController`
+/// بلا حراسة دخول (صور أسطوانات وبانرات يراها كل مستخدم). صورة هوية شخصية
+/// وسجل تجاري لا يجوز أن يفتحها من خمّن معرّفاً — فمخزنٌ منفصل يُقدَّم من
+/// مسار محروس بصلاحية المراجعة أو ملكية الوكالة وحدهما.
+model AgencyOnboardingDocument {
+  id           String @id @default(uuid())
+  onboardingId String
+  key          String
+
+  /// مرحلة انتقال إلى مخزن كائنات — انظر التعليق في UploadedImage
+  data       Bytes?
+  storageKey String?
+  mimeType   String
+  fileName   String?
+  /// محفوظ لا محسوباً من `data`: قراءة البايتات لعرض قائمةٍ من عشرين وثيقة
+  /// تسحب عشرات الميغابايتات من القاعدة لتعرض رقماً.
+  sizeBytes Int
+
+  status          OnboardingDocStatus @default(PENDING)
+  rejectionReason String?
+
+  uploadedAt   DateTime  @default(now())
+  reviewedAt   DateTime?
+  reviewedById String?
+
+  onboarding AgencyOnboarding @relation(fields: [onboardingId], references: [id], onDelete: Cascade)
+  reviewedBy User?            @relation("OnboardingDocReviewer", fields: [reviewedById], references: [id])
+
+  /// صفٌّ واحد لكل نوع وثيقة: الرفع من جديد يكتب فوق القديم. تاريخ نسخٍ
+  /// سابقة من صورة هوية ليس أثراً نريد الاحتفاظ به.
+  @@unique([onboardingId, key])
+  @@index([status])
+}
+
+/// سجلّ الأحداث — من فعل ماذا ومتى ومن أي عنوان.
+///
+/// هو ما يجعل الاعتماد قابلاً للمراجعة بعد سنة: «من اعتمد هذا الملف ومتى
+/// وبأي ملاحظة» سؤالٌ يُطرح فعلاً حين يقع خلاف. لا يحمل قيم الحقول
+/// الشخصية أبداً — فِعلاً وفاعلاً ووقتاً لا أكثر.
+model AgencyOnboardingEvent {
+  id           String @id @default(uuid())
+  onboardingId String
+
+  /// SUBMITTED, APPROVED, REJECTED, CHANGES_REQUESTED, DOC_UPLOADED,
+  /// DOC_VERIFIED, DOC_REJECTED, REQUIREMENTS_CHANGED
+  type String
+  note String?
+
+  actorId   String?
+  ip        String?
+  userAgent String?
+
+  createdAt DateTime @default(now())
+
+  onboarding AgencyOnboarding @relation(fields: [onboardingId], references: [id], onDelete: Cascade)
+  actor      User?            @relation("OnboardingEventActor", fields: [actorId], references: [id])
+
+  @@index([onboardingId, createdAt])
+}
+
+// ===================== العقود =====================
+//
+// العقد يُولَّد من قالب مرقَّم + بيانات ملف المنشأة المعتمد + إعدادات
+// المنصة، ثم **يُجمَّد**: نصّه المُصيَّر يُخزَّن كما هو مع بصمة SHA-256 له.
+// بعد ذلك لا يغيّره تعديل القالب ولا تصحيح بيانات — نسخةٌ وقّعها إنسانٌ
+// وطبعها لا يجوز أن تتبدّل تحت يده.
+
+enum ContractStatus {
+  /// وُلِّد ولم يُرسَل للوكالة بعد — يمكن للمنصة إلغاؤه بلا أثر
+  DRAFT
+  /// بانتظار توقيع الوكالة
+  PENDING_AGENCY
+  /// وقّعت الوكالة، بانتظار توقيع المنصة المقابل
+  PENDING_PLATFORM
+  /// موقّع من الطرفين وسارٍ
+  ACTIVE
+  /// انقضت مدته ولم يُجدَّد
+  EXPIRED
+  /// أُنهي قبل انقضاء مدته
+  TERMINATED
+  /// أُلغي قبل أن يوقّعه أحد
+  CANCELLED
+}
+
+enum ContractSignerSide {
+  AGENCY
+  PLATFORM
+}
+
+/// النسخة الورقية: المادة ٢٨ — التفعيل يجوز بالتوقيع الإلكتروني، والورقة
+/// تلحق خلال مهلة، وعدم لحاقها يجيز التعليق.
+enum WetCopyStatus {
+  NOT_REQUIRED
+  PENDING
+  UPLOADED
+  VERIFIED
+  REJECTED
+}
+
+/// قالب العقد — مرقَّم ولا يُعدَّل بعد أول توقيع عليه.
+///
+/// تعديل قالبٍ وُقِّع عليه يعني أن عقوداً قائمة صار نصّها المرجعي غير الذي
+/// قرأه الموقّعون. فالتعديل ينشئ نسخة جديدة، والعقود القديمة تبقى مربوطة
+/// بنسختها. النصّ المجمَّد في العقد نفسه هو الضمانة الثانية.
+model ContractTemplate {
+  id      String @id @default(uuid())
+  version Int    @unique
+  titleAr String
+
+  /// متن العقد بصيغة HTML مع متغيّرات {{key}} من كتالوج contract.catalog.ts
+  bodyHtml String
+
+  /// لا يُفعَّل إلا قالب واحد في كل وقت — العقد الجديد يؤخذ منه
+  isActive Boolean @default(false)
+
+  /// يصير صحيحاً عند أول عقد يُولَّد منه، فيمنع التعديل عليه بعدها
+  isLocked Boolean @default(false)
+
+  notesAr     String?
+  createdAt   DateTime @default(now())
+  createdById String?
+  createdBy   User?    @relation("ContractTemplateAuthor", fields: [createdById], references: [id])
+
+  contracts AgencyContract[]
+
+  @@index([isActive])
+}
+
+/// إعدادات العقود — صفٌّ واحد (id = 1) كـInvoiceSettings.
+///
+/// هوية الطرف الأول هنا لا في InvoiceSettings: تلك هوية مُصدِر فاتورة،
+/// وهذه هوية طرفٍ متعاقد تشمل المفوّض بالتوقيع وصفته. خلطهما يجعل تغيير
+/// المدير المالي يغيّر من يوقّع العقود.
+model ContractSettings {
+  id Int @id @default(1)
+
+  // ---- الطرف الأول ----
+  platformLegalNameAr  String  @default("GasGo")
+  platformEntityTypeAr String?
+  platformNationalNo   String?
+  platformRegistryNo   String?
+  platformTaxNumber    String?
+  platformAddressAr    String?
+  platformSignerName   String?
+  platformSignerRole   String?
+
+  // ---- الشروط الافتراضية (المواد ٤ و٥ و٦ و١٥) ----
+  termMonths            Int     @default(12)
+  renewNoticeDays       Int     @default(30)
+  terminationNoticeDays Int     @default(30)
+  commissionNoticeDays  Int     @default(30)
+  /// المادة ٦-٦: مهلة الوكالات القائمة لاستكمال ملفّها
+  legacyGraceDays       Int     @default(60)
+  /// المادة ٢٨: مهلة وصول النسخة الورقية بعد التفعيل
+  wetCopyDueDays        Int     @default(30)
+  /// هل تُطلب النسخة الورقية أصلاً — قرارٌ يبدّله الأدمن بلا نشر إصدار
+  wetCopyRequired       Boolean @default(true)
+
+  /// المادة ٣٨-٣: نصّ جهة فض النزاع — يُترك فارغاً حتى يحدّده المحامي،
+  /// ولا يُولَّد عقد وهو فارغ: مادةٌ ناقصة في وثيقة موقّعة أسوأ من تأخير.
+  jurisdictionClauseAr String?
+
+  /// رسوم الطوابع — معطّلة حتى يفتي المحامي. حين تُفعَّل يظهر نصّها في
+  /// ذيل العقد وفي شاشة الاعتماد.
+  stampDutyEnabled Boolean @default(false)
+  stampDutyNoteAr  String?
+
+  // ---- التنبيهات والدورة التلقائية ----
+  /// المفتاح العام: معطّل = لا تنبيه يخرج ولا عقد يُجدَّد أو يُنتهي آلياً.
+  /// مفتاح واحد يوقف كل شيء أهم من إطفاء عشر قواعد واحدة واحدة عند الحاجة.
+  alertsEnabled   Boolean @default(true)
+  /// كل كم ساعة تُفحص الاستحقاقات. الفحص رخيص والتكرار محميّ بسجلّ
+  /// الإرسال، فالرقم يوازن بين سرعة الوصول وضجيج السجلّات لا أكثر.
+  alertCheckHours Int     @default(6)
+
+  /// عقد انقضت مدته وعليه `autoRenew`: يُمدَّد تلقائياً مدةً مماثلة.
+  /// إطفاء هذا يجعل كل العقود تنتهي بانقضاء مدتها مهما كان إعداد العقد
+  /// نفسه — قرار منصة يعلو على قرار العقد المفرد.
+  autoRenewOnExpiry Boolean @default(true)
+  /// عقد انقضى ولا تجديد له: تتحوّل حالته إلى «منتهٍ» آلياً. إطفاؤه يبقي
+  /// العقود «سارية» بعد انقضائها — وهو ما لا يجوز إلا إن أراد الأدمن
+  /// إدارتها يدوياً بالكامل.
+  autoExpire        Boolean @default(true)
+
+  /// بادئة ترقيم العقود — GG-AGR-<السنة>-<تسلسل>
+  numberPrefix String @default("GG-AGR")
+  nextSequence Int    @default(1)
+
+  updatedAt DateTime @updatedAt
+}
+
+/// عقد وكالة واحد.
+model AgencyContract {
+  id       String @id @default(uuid())
+  agencyId String
+  /// رقم العقد المعروض — GG-AGR-2026-0001
+  number   String @unique
+
+  templateId      String
+  templateVersion Int
+
+  status ContractStatus @default(DRAFT)
+
+  // ---- المدة (المادة ٤) ----
+  contractDate DateTime  @db.Date
+  startsAt     DateTime? @db.Date
+  /// null قبل التفعيل: المدة تبدأ من التوقيع لا من التوليد
+  endsAt       DateTime? @db.Date
+  autoRenew    Boolean   @default(true)
+
+  // ---- الشروط المالية المطبوعة في هذه النسخة (المادة ١٦) ----
+  /// null = معفاة من الاشتراك. صفر قيمة صريحة مختلفة عنها.
+  subscriptionMonthly Decimal? @db.Decimal(10, 2)
+  serviceAreaAr       String?
+  branchNameAr        String?
+
+  /// النصّ المجمَّد: العقد بعد تعبئة متغيّراته، كما قُرئ ووُقِّع.
+  renderedHtml String
+  /// SHA-256 للنصّ المجمَّد — أي حرف يتغيّر تنكشف البصمة. هي ما يُطبع في
+  /// ذيل الوثيقة وما يُقارن عند أي نزاع.
+  contentHash  String
+
+  // ---- النسخة الورقية (المادة ٢٨) ----
+  wetCopyStatus    WetCopyStatus @default(PENDING)
+  wetCopyDueAt     DateTime?
+  wetCopyRejection String?
+
+  terminatedAt    DateTime?
+  terminationNote String?
+
+  createdAt   DateTime @default(now())
+  createdById String?
+  updatedAt   DateTime @updatedAt
+
+  agency     Agency               @relation(fields: [agencyId], references: [id])
+  template   ContractTemplate     @relation(fields: [templateId], references: [id])
+  createdBy  User?                @relation("ContractCreator", fields: [createdById], references: [id])
+  signatures ContractSignature[]
+  documents  ContractDocument[]
+  events     ContractEvent[]
+  links      ContractPublicLink[]
+
+  @@index([agencyId, status])
+  @@index([status, endsAt])
+}
+
+/// توقيع طرف واحد — ومعه ظرفُه كاملاً.
+///
+/// قوة التوقيع الإلكتروني ليست في صورة الإمضاء (تُقصّ وتُلصق) بل في هذا
+/// الصفّ: من وقّع، ومتى، ومن أي عنوان، وبأي وسيلة تحقّق، وعلى أي بصمة
+/// وثيقة. البصمة منسوخة هنا عمداً لا مقروءة من العقد: لو تبدّل العقد يوماً
+/// بقيت البصمة التي وقّع عليها هذا الشخص فعلاً.
+model ContractSignature {
+  id         String             @id @default(uuid())
+  contractId String
+  side       ContractSignerSide
+
+  signerUserId String?
+  signerName   String
+  signerRole   String?
+  /// رقم الهاتف المسجّل وقت التوقيع — المادة ٢٧-٢
+  signerPhone  String?
+
+  /// صورة التوقيع المرسوم — PNG. تُخزَّن كبايتات محروسة لا في مخزن الصور
+  /// العام: إمضاء شخص ليس صورة أسطوانة.
+  ///
+  /// مرحلة انتقال إلى مخزن كائنات — انظر التعليق في UploadedImage. كانت
+  /// nullable أصلاً لأن التوقيع اختياري، فالعمود الجديد يتبع نفس المنطق.
+  signatureImage    Bytes?
+  signatureImageKey String?
+
+  /// كيف تحقّقنا من الموقّع: PASSWORD (إعادة إدخال كلمة مرور الحساب) أو
+  /// PLATFORM_STAFF (موظف منصة مصادَق عليه).
+  verificationMethod String
+  verifiedAt         DateTime
+
+  /// البصمة التي وُقِّع عليها — نسخة لا مرجع
+  documentHash String
+
+  ip        String?
+  userAgent String?
+
+  signedAt DateTime @default(now())
+
+  contract   AgencyContract @relation(fields: [contractId], references: [id], onDelete: Cascade)
+  signerUser User?          @relation("ContractSigner", fields: [signerUserId], references: [id])
+
+  /// توقيع واحد لكل طرف — إعادة التوقيع تكتب فوقه
+  @@unique([contractId, side])
+}
+
+/// مرفقات العقد — أهمها صورة العقد الموقّع والمختوم. مخزن محروس كوثائق
+/// ملف المنشأة، وللسبب نفسه.
+model ContractDocument {
+  id         String @id @default(uuid())
+  contractId String
+  /// WET_COPY (العقد الموقّع مصوَّراً) · APPENDIX (ملحق) · OTHER
+  kind       String
+
+  /// مرحلة انتقال إلى مخزن كائنات — انظر التعليق في UploadedImage
+  data       Bytes?
+  storageKey String?
+  mimeType   String
+  fileName   String?
+  sizeBytes  Int
+
+  uploadedAt   DateTime @default(now())
+  uploadedById String?
+
+  contract   AgencyContract @relation(fields: [contractId], references: [id], onDelete: Cascade)
+  uploadedBy User?          @relation("ContractDocUploader", fields: [uploadedById], references: [id])
+
+  @@unique([contractId, kind])
+}
+
+/// سجلّ الأدلة — ما يجعل العقد قابلاً للمراجعة بعد سنة.
+model ContractEvent {
+  id         String @id @default(uuid())
+  contractId String
+
+  /// GENERATED, SENT, VIEWED, DOWNLOADED, SIGNED_AGENCY, SIGNED_PLATFORM,
+  /// WET_COPY_UPLOADED, WET_COPY_VERIFIED, WET_COPY_REJECTED, TERMINATED,
+  /// RENEWED, CANCELLED
+  type String
+  note String?
+
+  actorId   String?
+  ip        String?
+  userAgent String?
+
+  createdAt DateTime @default(now())
+
+  contract AgencyContract @relation(fields: [contractId], references: [id], onDelete: Cascade)
+  actor    User?          @relation("ContractEventActor", fields: [actorId], references: [id])
+
+  @@index([contractId, createdAt])
+}
+
+/// رابط دائم لفتح العقد من متصفح خارجي بلا تسجيل دخول — نفس آلية
+/// InvoicePublicLink: الرمز الخام لا يُخزَّن، فقط بصمته.
+model ContractPublicLink {
+  id             String    @id @default(uuid())
+  contractId     String    @unique
+  tokenHash      String    @unique
+  createdAt      DateTime  @default(now())
+  revokedAt      DateTime?
+  lastAccessedAt DateTime?
+
+  contract AgencyContract @relation(fields: [contractId], references: [id], onDelete: Cascade)
+}
+
+// ===================== تنبيهات الاستحقاق =====================
+//
+// ما يُنبَّه عليه، ومتى، ولمن، وبأي نصّ — كله صفوف في القاعدة يحرّرها
+// الأدمن، لا ثوابت في الشيفرة. السبب نفسه الذي جعل حقول ملف المنشأة
+// قابلة للضبط: «قبل 60 و30 و7 أيام» عددٌ اخترناه لا حكمٌ قانوني، وأول
+// مرة يريد أحدهم تنبيهاً قبل 90 يوماً يجب ألّا ينتظر نشر إصدار.
+
+enum ContractAlertKind {
+  /// قرب انتهاء مدة العقد (المادة 4)
+  CONTRACT_EXPIRY
+  /// مهلة تسليم النسخة الورقية (المادة 28)
+  WET_COPY_DUE
+  /// قرب انتهاء ترخيص تشغيلي مسجّل في ملف المنشأة (المادة 7)
+  LICENSE_EXPIRY
+  /// مهلة الوكالات القائمة لاستكمال ملف المنشأة (المادة 6-6)
+  ONBOARDING_GRACE
+}
+
+/// قاعدة تنبيه واحدة: نوعٌ وموعدٌ ونصّ ومستلمون.
+model ContractAlertRule {
+  id   String            @id @default(uuid())
+  kind ContractAlertKind
+
+  /// الإزاحة بالأيام عن تاريخ الاستحقاق: موجب = قبله (تنبيه مبكر)،
+  /// صفر = يومه، سالب = بعده (تذكير بالتأخّر). السالب مقصود ومطلوب —
+  /// النسخة الورقية المتأخرة تحتاج إلحاحاً لا صمتاً.
+  offsetDays Int
+
+  enabled Boolean @default(true)
+
+  /// لمن يذهب: الوكالة، المنصة، أو كلاهما. تنبيهٌ لا مستلم له معطَّل فعلياً
+  /// وإن بدا مفعّلاً، فالخدمة ترفض حفظه.
+  notifyAgency   Boolean @default(true)
+  notifyPlatform Boolean @default(false)
+
+  /// النصّ بمتغيّراته: {{days}} {{number}} {{agency}} {{date}} {{item}}
+  titleAr String
+  bodyAr  String
+
+  sortOrder Int @default(0)
+
+  updatedAt   DateTime @updatedAt
+  updatedById String?
+  updatedBy   User?    @relation("ContractAlertEditor", fields: [updatedById], references: [id])
+
+  logs ContractAlertLog[]
+
+  /// قاعدتان بنفس النوع والموعد تعنيان إشعارين متطابقين في اليوم نفسه
+  @@unique([kind, offsetDays])
+  @@index([kind, enabled])
+}
+
+/// أثر الإرسال — وهو ما يمنع التكرار.
+///
+/// المهمة تعمل كل بضع ساعات، فبلا هذا الجدول يصل «تبقّى 30 يوماً» أربع
+/// مرات في اليوم. القيد الفريد على (القاعدة، الموضوع، الدورة) يجعل كل
+/// تنبيه يقع مرة واحدة لكل دورة استحقاق.
+model ContractAlertLog {
+  id     String @id @default(uuid())
+  ruleId String
+
+  /// contract:<id> · license:<id> · onboarding:<id>
+  subjectKey String
+  /// تاريخ الاستحقاق نفسه — تجديد العقد يغيّره، فتعود التنبيهات لدورته
+  /// الجديدة بلا حاجة لمسح السجل يدوياً.
+  cycleKey   String
+
+  agencyId   String?
+  /// كم مستلماً وصلهم فعلاً — صفرٌ يعني قاعدةً تعمل بلا أثر، وهو ما يجب
+  /// أن يظهر للأدمن لا أن يُخفى
+  recipients Int      @default(0)
+  sentAt     DateTime @default(now())
+
+  rule ContractAlertRule @relation(fields: [ruleId], references: [id], onDelete: Cascade)
+
+  @@unique([ruleId, subjectKey, cycleKey])
+  @@index([sentAt])
+}

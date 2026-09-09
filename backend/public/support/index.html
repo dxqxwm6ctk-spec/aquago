@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>الدعم — GasGO</title>
+<!--
+  App Store يطلب Support URL إلزامياً في صفحة التطبيق (بجانب Privacy Policy
+  URL)، ويرفض رابطاً لا يفتح صفحة دعم حقيقية. تُخدَم من backend/public مثل
+  صفحة الخصوصية، فرابطها عنوان الخادم + /support/.
+
+  قبل الإرسال للمراجعة: املأ بريد الدعم ورقم الواتساب أدناه (data-fill).
+-->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@300;400;500;600;700&family=Plus+Jakarta+Sans:wght@600;700;800&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --maroon: #A41442; --maroon-dark: #7D0F33; --gold: #E2A82F;
+    --ink: #111B36; --muted: #687188; --line: #E2E5EC; --bg: #F6F7FB;
+    --card: #FFFFFF;
+    --warn-bg: #FFF6F6; --warn-line: #F0C9C9; --warn-fg: #8D2020;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: var(--bg); -webkit-font-smoothing: antialiased; }
+  body {
+    font-family: 'IBM Plex Sans Arabic', 'Segoe UI', Tahoma, sans-serif;
+    color: var(--ink); font-size: 16px; line-height: 1.85;
+  }
+  a { color: var(--maroon); text-decoration: none; }
+  a:hover { color: var(--maroon-dark); text-decoration: underline; }
+
+  /* شريط علوي بهوية GasGO — نفس شريط صفحة التسويق ليقرأ الزائر أنه في
+     الموقع نفسه لا في صفحة معزولة تشبهه مصادفةً */
+  .topbar { background: rgba(255,255,255,.86); backdrop-filter: blur(18px); border-bottom: 1px solid var(--line); position: sticky; top: 0; z-index: 50; }
+  .topbar-in { max-width: 860px; margin: 0 auto; padding: 0 22px; height: 72px; display: flex; align-items: center; gap: 12px; }
+  .brand-word { font: 800 26px 'Plus Jakarta Sans'; letter-spacing: -.04em; color: var(--maroon); direction: ltr; }
+  .topbar-links { margin-inline-start: auto; display: flex; gap: 22px; font-weight: 500; font-size: 15px; }
+  .topbar-links a { color: var(--muted); }
+
+  main { max-width: 860px; margin: 0 auto; padding: 44px 22px 90px; }
+  header { border-bottom: 1px solid var(--line); padding-bottom: 22px; margin-bottom: 30px; }
+  h1 { font-weight: 700; font-size: clamp(26px, 4vw, 36px); line-height: 1.3; margin: 0 0 8px; letter-spacing: -.01em; }
+  h2 { font-weight: 600; font-size: 1.2rem; margin: 38px 0 10px; color: var(--maroon); }
+  h3 { font-weight: 600; font-size: 1.02rem; margin: 24px 0 6px; }
+  p { margin: 10px 0; }
+  .muted { color: var(--muted); font-size: .93rem; }
+  ul { padding-inline-start: 22px; }
+  li { margin: 7px 0; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 18px; padding: 20px 22px; margin: 20px 0; }
+  .warn { background: var(--warn-bg); border: 1px solid var(--warn-line); color: var(--warn-fg); border-radius: 18px; padding: 18px 20px; margin: 16px 0; }
+  table { width: 100%; border-collapse: collapse; margin: 14px 0; font-size: .95rem; }
+  th, td { border: 1px solid var(--line); padding: 10px 12px; text-align: start; vertical-align: top; }
+  th { background: var(--bg); font-weight: 600; }
+  .en { direction: ltr; text-align: left; border-top: 1px solid var(--line); margin-top: 52px; padding-top: 26px; }
+
+  .pagefoot { border-top: 1px solid var(--line); background: #fff; }
+  .pagefoot-in { max-width: 860px; margin: 0 auto; padding: 26px 22px; display: flex; align-items: center; justify-content: space-between; gap: 18px; flex-wrap: wrap; font-size: 14px; color: var(--muted); }
+  .pagefoot-in a { color: var(--muted); }
+
+  @media (max-width: 620px) { .topbar-links { display: none; } }
+</style>
+</head>
+<body>
+<div class="topbar">
+  <div class="topbar-in">
+    <a href="/" style="display:flex; align-items:center; gap:10px">
+      <svg width="34" height="34" viewBox="0 0 120 120" style="overflow:visible" aria-hidden="true">
+        <path d="M60 22 a38 38 0 1 0 34 55" fill="none" stroke="#A41442" stroke-width="17" stroke-linecap="round"/>
+        <path d="M60 60 H97" fill="none" stroke="#A41442" stroke-width="17" stroke-linecap="round"/>
+        <path d="M97 33 c11 10 15 18 15 25 0 9-7 15-15 15 s-15-6-15-15 c0-7 4-15 15-25 z" fill="#E2A82F"/>
+      </svg>
+      <span class="brand-word">Gas<span style="color:var(--gold)">GO</span></span>
+    </a>
+    <div class="topbar-links">
+        <a href="/privacy/">الخصوصية</a>
+        <a href="/terms/">الشروط</a>
+        <a href="/support/" style="color:var(--maroon); font-weight:600">الدعم</a>
+    </div>
+  </div>
+</div>
+
+
+<main>
+  <header>
+    <h1>الدعم — GasGO</h1>
+    <p class="muted">تطبيق <strong>GasGO</strong> للزبون، وتطبيق <strong>GasGO Driver</strong> للمندوب.</p>
+  </header>
+
+  <div class="card" data-fill="contact">
+    <h2 style="margin-top:0">تواصل معنا</h2>
+    <ul>
+      <li><strong>البريد:</strong> <a href="mailto:tarqywsf734@gmail.com">tarqywsf734@gmail.com</a></li>
+      <li><strong>من داخل التطبيق:</strong> شاشة الدعم — تفتح محادثة مباشرة مع فريقنا وتصلك الردود كإشعار.</li>
+    </ul>
+    <p class="muted" style="margin-bottom:0">أوقات الرد: يومياً، وعادةً خلال ساعات قليلة.</p>
+  </div>
+
+  <h2>أسئلة متكرّرة</h2>
+
+  <h3>كيف أطلب أسطوانة؟</h3>
+  <p>افتح التطبيق، اختر عنوان التوصيل ونوع الأسطوانة والكمية، ثم أرسل الطلب. يصلك إشعار عند قبول الوكالة، وآخر عند انطلاق المندوب، ويمكنك متابعة موقعه على الخريطة حتى الباب.</p>
+
+  <h3>كيف أدفع؟</h3>
+  <p>نقداً عند الاستلام. لا نطلب بيانات بطاقات مصرفية داخل التطبيق إطلاقاً.</p>
+
+  <h3>هل أستطيع إلغاء الطلب؟</h3>
+  <p>نعم، ما دام لم يقبله مندوب بعد — زرّ الإلغاء يظهر على شاشة الطلب. بعد انطلاق المندوب راسِلنا وسنتصرّف معك.</p>
+
+  <h3>لا تصلني الإشعارات</h3>
+  <p>تأكد من السماح بالإشعارات للتطبيق من إعدادات الهاتف، ومن أن التطبيق غير مقيَّد بموفّر البطارية. إن بقيت المشكلة راسِلنا وأخبِرنا بنوع الهاتف.</p>
+
+  <h3>لا يظهر موقعي على الخريطة</h3>
+  <p>اسمح بصلاحية الموقع للتطبيق («أثناء الاستخدام» تكفي)، وتأكد أن خدمة الموقع في الهاتف مفعّلة. يمكنك دائماً تحريك الدبّوس يدوياً لتحديد العنوان.</p>
+
+  <h3>كيف أحذف حسابي؟</h3>
+  <p>من داخل التطبيق: <strong>الحساب ← حذف الحساب</strong>، ثم أكِّد. يُحذف اسمك ورقمك وعناوينك فوراً. لا يمكن الحذف وأنت في وسط طلب جارٍ — أنهِه أو ألغِه أولاً. وحساب المندوب تحذفه وكالته لا هو، لأن عضويته فيها ليست ملكه وحده. التفاصيل في <a href="/privacy/">سياسة الخصوصية</a>.</p>
+
+  <h3>أنا مندوب ولا أستلم عروض الطلبات</h3>
+  <p>تأكد أنك «متاح» في التطبيق، وأن الإشعارات والموقع مسموحان، وأنك مسجَّل الدخول على جهاز واحد — الدخول من جهاز جديد ينهي جلسة الجهاز القديم. إن بقيت المشكلة راجِع وكالتك أو راسِلنا.</p>
+
+  <p class="muted" style="margin-top:36px">راجع أيضاً <a href="/privacy/">سياسة الخصوصية</a> و<a href="/terms/">شروط الاستخدام</a>.</p>
+</main>
+
+<div class="pagefoot">
+  <div class="pagefoot-in">
+    <div>© 2026 GasGO</div>
+    <div style="display:flex; gap:20px">
+      <a href="/">الرئيسية</a>
+      <a href="/privacy/">الخصوصية</a>
+      <a href="/terms/">الشروط</a>
+      <a href="/support/">الدعم</a>
+    </div>
+  </div>
+</div>
+</body>
+</html>

@@ -1,0 +1,506 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>أكوا جو — لوحة التحكم</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="/socket.io/socket.io.js"></script>
+<script>
+  tailwind.config = {
+    theme: {
+      extend: {
+        fontFamily: { sans: ['"IBM Plex Sans Arabic"', 'sans-serif'] },
+        colors: {
+          primary: '#1a365d',
+          'primary-dark': '#002045',
+          accent: '#fd8b00',
+          success: '#00b753',
+          surface: '#f8f9ff',
+        },
+        boxShadow: {
+          card: '0px 2px 8px rgba(26, 54, 93, 0.05)',
+          modal: '0px 10px 20px rgba(26, 54, 93, 0.12)',
+        },
+      },
+    },
+  };
+</script>
+<style>
+  body { background: #f8f9ff; }
+  .nav-item.active { background: #1a365d; color: #fff; }
+  .badge { border-radius: 9999px; padding: 2px 12px; font-size: 12px; font-weight: 600; }
+  #map { height: 420px; border-radius: 1rem; z-index: 0; }
+  table th { font-weight: 600; color: #43474e; font-size: 13px; }
+  table td { font-size: 14px; }
+</style>
+</head>
+<body class="font-sans text-[#0b1c30]">
+
+<!-- ============ شاشة تسجيل الدخول ============ -->
+<div id="login-view" class="min-h-screen flex items-center justify-center p-4">
+  <div class="bg-white rounded-2xl shadow-modal p-8 w-full max-w-md">
+    <div class="flex items-center gap-3 mb-6">
+      <div class="w-12 h-12 rounded-xl bg-primary-dark text-white flex items-center justify-center text-2xl">🔥</div>
+      <div>
+        <h1 class="text-xl font-bold text-primary-dark">أكوا جو</h1>
+        <p class="text-sm text-slate-500">لوحة التحكم والإدارة المالية</p>
+      </div>
+    </div>
+    <label class="block text-sm font-medium mb-2">رقم الهاتف</label>
+    <input id="login-phone" dir="ltr" value="+962790000001"
+      class="w-full border border-slate-300 rounded-lg px-4 py-3 mb-4 focus:outline-none focus:border-primary" />
+    <div id="otp-row" class="hidden">
+      <label class="block text-sm font-medium mb-2">رمز التحقق <span id="dev-code" class="text-accent font-bold"></span></label>
+      <input id="login-code" dir="ltr" placeholder="123456"
+        class="w-full border border-slate-300 rounded-lg px-4 py-3 mb-4 focus:outline-none focus:border-primary" />
+    </div>
+    <button id="login-btn" onclick="loginStep()"
+      class="w-full bg-accent hover:bg-orange-500 text-white font-bold py-3.5 rounded-lg transition">إرسال الرمز</button>
+    <p id="login-error" class="text-red-600 text-sm mt-3 hidden"></p>
+    <p class="text-xs text-slate-400 mt-4">حساب تجريبي: ‎+962790000001 (أدمن) أو ‎+962790000002 (مالية) — الرمز 123456</p>
+  </div>
+</div>
+
+<!-- ============ الواجهة الرئيسية ============ -->
+<div id="app-view" class="hidden min-h-screen flex">
+  <!-- الشريط الجانبي -->
+  <aside class="w-64 bg-white border-l border-slate-200 flex flex-col shrink-0">
+    <div class="p-5 flex items-center gap-3 border-b border-slate-100">
+      <div class="w-10 h-10 rounded-lg bg-primary-dark text-white flex items-center justify-center text-xl">🔥</div>
+      <h1 class="font-bold text-primary-dark">أكوا جو</h1>
+    </div>
+    <nav class="flex-1 p-3 space-y-1 text-[15px]">
+      <a href="#overview" class="nav-item block px-4 py-2.5 rounded-lg hover:bg-slate-100">📊 نظرة عامة</a>
+      <a href="#orders" class="nav-item block px-4 py-2.5 rounded-lg hover:bg-slate-100">📦 الطلبات</a>
+      <a href="#drivers" class="nav-item block px-4 py-2.5 rounded-lg hover:bg-slate-100">🚚 السائقون</a>
+      <a href="#customers" class="nav-item block px-4 py-2.5 rounded-lg hover:bg-slate-100">👥 العملاء</a>
+      <a href="#pricing" class="nav-item block px-4 py-2.5 rounded-lg hover:bg-slate-100">🏷️ التسعير</a>
+      <a href="#finance" class="nav-item block px-4 py-2.5 rounded-lg hover:bg-slate-100">💰 التقارير المالية</a>
+      <a href="#gateway" class="nav-item block px-4 py-2.5 rounded-lg hover:bg-slate-100">💳 بوابة الدفع</a>
+    </nav>
+    <div class="p-4 border-t border-slate-100">
+      <p id="me-name" class="font-semibold text-sm"></p>
+      <p id="me-role" class="text-xs text-slate-500 mb-2"></p>
+      <button onclick="logout()" class="text-red-600 text-sm font-medium">تسجيل الخروج ⏻</button>
+    </div>
+  </aside>
+
+  <!-- المحتوى -->
+  <main class="flex-1 p-6 overflow-auto max-w-[1280px]" id="main"></main>
+</div>
+
+<script>
+const API = '/api';
+let token = localStorage.getItem('gas_token') || '';
+let me = null;
+let socket = null;
+let map = null;
+let mapMarkers = {};
+
+const JOD = (n) => Number(n).toFixed(2) + ' د.أ';
+const STATUS_AR = {
+  PENDING: ['بانتظار سائق', 'bg-blue-100 text-blue-800'],
+  ASSIGNED: ['تم التعيين', 'bg-indigo-100 text-indigo-800'],
+  LOADING: ['جاري التحميل', 'bg-orange-100 text-orange-800'],
+  ON_THE_WAY: ['قيد التوصيل', 'bg-amber-100 text-amber-800'],
+  DELIVERED: ['تم التوصيل', 'bg-green-100 text-green-800'],
+  CANCELLED: ['ملغي', 'bg-red-100 text-red-700'],
+};
+const METHOD_AR = { CASH: 'نقداً', CARD: 'بطاقة', ZAINCASH: 'زين كاش' };
+const TXN_AR = {
+  AUTHORIZED: ['مفوَّض', 'bg-blue-100 text-blue-800'],
+  CAPTURED: ['مقبول', 'bg-green-100 text-green-800'],
+  DECLINED: ['مرفوض', 'bg-red-100 text-red-700'],
+  REFUNDED: ['مسترجع', 'bg-slate-100 text-slate-700'],
+};
+const badge = (map, key) => {
+  const [label, cls] = map[key] || [key, 'bg-slate-100'];
+  return `<span class="badge ${cls}">${label}</span>`;
+};
+const timeAgo = (d) => {
+  const mins = Math.round((Date.now() - new Date(d).getTime()) / 60000);
+  if (mins < 60) return `منذ ${mins} دقيقة`;
+  if (mins < 1440) return `منذ ${Math.round(mins / 60)} ساعة`;
+  return `منذ ${Math.round(mins / 1440)} يوم`;
+};
+
+async function api(path, opts = {}) {
+  const res = await fetch(API + path, {
+    ...opts,
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: 'Bearer ' + token } : {}),
+    },
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.message || 'خطأ في الاتصال');
+  return data;
+}
+
+// ============ تسجيل الدخول ============
+let otpSent = false;
+async function loginStep() {
+  const errorEl = document.getElementById('login-error');
+  errorEl.classList.add('hidden');
+  const phone = document.getElementById('login-phone').value;
+  try {
+    if (!otpSent) {
+      const r = await api('/auth/otp/request', { method: 'POST', body: JSON.stringify({ phone }) });
+      otpSent = true;
+      document.getElementById('otp-row').classList.remove('hidden');
+      if (r.devCode) document.getElementById('dev-code').textContent = '(وضع التطوير: ' + r.devCode + ')';
+      document.getElementById('login-btn').textContent = 'تسجيل الدخول';
+    } else {
+      const code = document.getElementById('login-code').value;
+      const r = await api('/auth/otp/verify', { method: 'POST', body: JSON.stringify({ phone, code }) });
+      if (r.user.role !== 'ADMIN' && r.user.role !== 'FINANCE') {
+        throw new Error('هذا الحساب لا يملك صلاحية الدخول للوحة التحكم');
+      }
+      token = r.token;
+      localStorage.setItem('gas_token', token);
+      await boot();
+    }
+  } catch (e) {
+    errorEl.textContent = e.message;
+    errorEl.classList.remove('hidden');
+  }
+}
+
+function logout() {
+  localStorage.removeItem('gas_token');
+  location.reload();
+}
+
+// ============ الإقلاع ============
+async function boot() {
+  try {
+    me = await api('/auth/me');
+    if (me.role !== 'ADMIN' && me.role !== 'FINANCE') throw new Error();
+  } catch {
+    token = '';
+    localStorage.removeItem('gas_token');
+    return;
+  }
+  document.getElementById('login-view').classList.add('hidden');
+  document.getElementById('app-view').classList.remove('hidden');
+  document.getElementById('me-name').textContent = me.name;
+  document.getElementById('me-role').textContent = me.role === 'ADMIN' ? 'مدير النظام' : 'المسؤول المالي';
+  socket = io({ transports: ['websocket'], auth: { token } });
+  socket.on('order:new', () => { if (location.hash === '#overview' || !location.hash) render(); });
+  socket.on('order:status', () => { if (['#overview', '#orders', ''].includes(location.hash)) render(); });
+  socket.on('driver:location', (p) => updateDriverMarker(p));
+  window.addEventListener('hashchange', render);
+  render();
+}
+
+function setActiveNav() {
+  const hash = location.hash || '#overview';
+  document.querySelectorAll('.nav-item').forEach((a) => {
+    a.classList.toggle('active', a.getAttribute('href') === hash);
+  });
+}
+
+async function render() {
+  setActiveNav();
+  const main = document.getElementById('main');
+  const hash = location.hash || '#overview';
+  main.innerHTML = '<p class="text-slate-400 p-8">جاري التحميل…</p>';
+  try {
+    if (hash === '#overview') await renderOverview(main);
+    else if (hash === '#orders') await renderOrders(main);
+    else if (hash === '#drivers') await renderDrivers(main);
+    else if (hash === '#customers') await renderCustomers(main);
+    else if (hash === '#pricing') await renderPricing(main);
+    else if (hash === '#finance') await renderFinance(main);
+    else if (hash === '#gateway') await renderGateway(main);
+  } catch (e) {
+    main.innerHTML = `<p class="text-red-600 p-8">${e.message}</p>`;
+  }
+}
+
+const statCard = (title, value, sub, icon, tone) => `
+  <div class="bg-white rounded-2xl shadow-card p-5 flex-1 min-w-[220px]">
+    <div class="flex items-center justify-between mb-3">
+      <span class="w-11 h-11 rounded-xl ${tone} flex items-center justify-center text-xl">${icon}</span>
+      ${sub ? `<span class="badge bg-green-100 text-green-700">${sub}</span>` : ''}
+    </div>
+    <p class="text-sm text-slate-500">${title}</p>
+    <p class="text-2xl font-bold mt-1">${value}</p>
+  </div>`;
+
+// ============ نظرة عامة ============
+async function renderOverview(main) {
+  const [stats, orders, drivers] = await Promise.all([
+    api('/admin/stats'),
+    api('/admin/orders?take=6'),
+    api('/admin/drivers'),
+  ]);
+  main.innerHTML = `
+    <h2 class="text-2xl font-bold mb-6">نظرة عامة</h2>
+    <div class="flex flex-wrap gap-4 mb-6">
+      ${statCard('إجمالي الطلبات اليوم', stats.ordersToday, 'مباشر', '🛒', 'bg-blue-50')}
+      ${statCard('السائقون المتاحون', stats.onlineDrivers, 'نشط الآن', '🚚', 'bg-orange-50')}
+      ${statCard('إيرادات اليوم', JOD(stats.revenueToday), '', '💵', 'bg-green-50')}
+      ${statCard('الإيرادات المحققة', JOD(stats.revenueTotal), '', '📈', 'bg-green-50')}
+    </div>
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
+      <div class="bg-white rounded-2xl shadow-card p-5">
+        <div class="flex justify-between items-center mb-4">
+          <h3 class="font-bold">آخر الطلبات</h3>
+          <a href="#orders" class="text-accent text-sm font-medium">عرض الكل</a>
+        </div>
+        <div class="space-y-3">
+          ${orders.map((o) => `
+            <div class="border-b border-slate-100 pb-3">
+              <div class="flex justify-between items-center">
+                <span class="font-bold text-sm">طلب ${o.code}</span>
+                ${badge(STATUS_AR, o.status)}
+              </div>
+              <p class="text-sm text-slate-500 mt-1">${o.customer.name} — ${o.zone.nameAr}</p>
+              <div class="flex justify-between text-xs text-slate-400 mt-1">
+                <span>${timeAgo(o.createdAt)}</span><span class="font-semibold text-slate-600">${JOD(o.total)}</span>
+              </div>
+            </div>`).join('')}
+        </div>
+      </div>
+      <div class="lg:col-span-2 bg-white rounded-2xl shadow-card p-5">
+        <div class="flex justify-between items-center mb-4">
+          <h3 class="font-bold">الخريطة الحية — عمّان</h3>
+          <div class="text-xs text-slate-500 flex gap-4">
+            <span>● <span class="text-primary font-semibold">طلبات نشطة (${stats.activeOrders})</span></span>
+            <span>● <span class="text-accent font-semibold">سائقون أونلاين (${stats.onlineDrivers})</span></span>
+          </div>
+        </div>
+        <div id="map"></div>
+      </div>
+    </div>`;
+  initMap(drivers, orders);
+}
+
+function initMap(drivers, orders) {
+  map = L.map('map').setView([31.9639, 35.8756], 12);
+  L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: '© OpenStreetMap',
+  }).addTo(map);
+  mapMarkers = {};
+  drivers.filter((d) => d.driverProfile?.isOnline && d.driverProfile.currentLat).forEach((d) => {
+    const marker = L.marker([d.driverProfile.currentLat, d.driverProfile.currentLng], {
+      icon: L.divIcon({
+        className: '',
+        html: `<div style="background:#7a4f01;color:#fff;border-radius:9999px;padding:3px 10px;font-size:11px;white-space:nowrap;font-family:'IBM Plex Sans Arabic'">🚚 ${d.name.split(' ')[0]}</div>`,
+      }),
+    }).addTo(map);
+    mapMarkers[d.id] = marker;
+  });
+  orders.filter((o) => ['PENDING', 'ASSIGNED', 'LOADING', 'ON_THE_WAY'].includes(o.status)).forEach((o) => {
+    if (o.zone) {
+      L.circleMarker([o.zone.centerLat, o.zone.centerLng], {
+        radius: 8, color: '#1a365d', fillColor: '#1a365d', fillOpacity: 0.9,
+      }).bindTooltip(`طلب ${o.code}`).addTo(map);
+    }
+  });
+}
+
+function updateDriverMarker(p) {
+  if (map && mapMarkers[p.driverId]) {
+    mapMarkers[p.driverId].setLatLng([p.lat, p.lng]);
+  }
+}
+
+// ============ الطلبات ============
+async function renderOrders(main) {
+  const orders = await api('/admin/orders?take=100');
+  main.innerHTML = `
+    <h2 class="text-2xl font-bold mb-6">الطلبات</h2>
+    <div class="bg-white rounded-2xl shadow-card overflow-hidden">
+      <table class="w-full text-right">
+        <thead class="bg-slate-50 border-b border-slate-200">
+          <tr>${['الطلب', 'العميل', 'المنطقة', 'السائق', 'الدفع', 'الإجمالي', 'الحالة', 'الوقت'].map((h) => `<th class="px-4 py-3">${h}</th>`).join('')}</tr>
+        </thead>
+        <tbody>
+          ${orders.map((o) => `
+            <tr class="border-b border-slate-100 hover:bg-slate-50">
+              <td class="px-4 py-3 font-bold">${o.code}</td>
+              <td class="px-4 py-3">${o.customer.name}</td>
+              <td class="px-4 py-3">${o.zone.nameAr}</td>
+              <td class="px-4 py-3">${o.driver?.name ?? '—'}</td>
+              <td class="px-4 py-3">${METHOD_AR[o.paymentMethod]}</td>
+              <td class="px-4 py-3 font-semibold">${JOD(o.total)}</td>
+              <td class="px-4 py-3">${badge(STATUS_AR, o.status)}</td>
+              <td class="px-4 py-3 text-slate-400 text-xs">${timeAgo(o.createdAt)}</td>
+            </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>`;
+}
+
+// ============ السائقون ============
+async function renderDrivers(main) {
+  const drivers = await api('/admin/drivers');
+  main.innerHTML = `
+    <h2 class="text-2xl font-bold mb-6">السائقون</h2>
+    <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+      ${drivers.map((d) => `
+        <div class="bg-white rounded-2xl shadow-card p-5">
+          <div class="flex items-center justify-between mb-3">
+            <div>
+              <p class="font-bold">${d.name}</p>
+              <p class="text-xs text-slate-400" dir="ltr">${d.phone}</p>
+            </div>
+            <span class="badge ${d.driverProfile?.isOnline ? 'bg-green-100 text-green-700' : 'bg-slate-100 text-slate-500'}">
+              ${d.driverProfile?.isOnline ? 'متصل' : 'غير متصل'}
+            </span>
+          </div>
+          <div class="grid grid-cols-3 gap-2 text-center text-sm">
+            <div class="bg-slate-50 rounded-lg p-2"><p class="text-slate-400 text-xs">التقييم</p><p class="font-bold">⭐ ${d.driverProfile?.rating ?? '—'}</p></div>
+            <div class="bg-slate-50 rounded-lg p-2"><p class="text-slate-400 text-xs">المركبة</p><p class="font-bold text-xs pt-1" dir="ltr">${d.driverProfile?.vehiclePlate ?? '—'}</p></div>
+            <div class="bg-slate-50 rounded-lg p-2"><p class="text-slate-400 text-xs">عدد التقييمات</p><p class="font-bold">${d.driverProfile?.ratingCount ?? 0}</p></div>
+          </div>
+        </div>`).join('')}
+    </div>`;
+}
+
+// ============ العملاء ============
+async function renderCustomers(main) {
+  const customers = await api('/admin/customers');
+  main.innerHTML = `
+    <h2 class="text-2xl font-bold mb-6">العملاء</h2>
+    <div class="bg-white rounded-2xl shadow-card overflow-hidden">
+      <table class="w-full text-right">
+        <thead class="bg-slate-50 border-b border-slate-200">
+          <tr>${['الاسم', 'الهاتف', 'عدد الطلبات', 'مسجل'].map((h) => `<th class="px-4 py-3">${h}</th>`).join('')}</tr>
+        </thead>
+        <tbody>
+          ${customers.map((c) => `
+            <tr class="border-b border-slate-100 hover:bg-slate-50">
+              <td class="px-4 py-3 font-semibold">${c.name}</td>
+              <td class="px-4 py-3" dir="ltr">${c.phone}</td>
+              <td class="px-4 py-3">${c._count.customerOrders}</td>
+              <td class="px-4 py-3 text-slate-400 text-xs">${timeAgo(c.createdAt)}</td>
+            </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>`;
+}
+
+// ============ التسعير ============
+async function renderPricing(main) {
+  const products = await api('/admin/products');
+  main.innerHTML = `
+    <h2 class="text-2xl font-bold mb-6">التسعير</h2>
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+      ${products.map((p) => `
+        <div class="bg-white rounded-2xl shadow-card p-5">
+          <div class="flex justify-between items-start mb-2">
+            <div>
+              <p class="font-bold">${p.nameAr} ${p.isNew ? '<span class="badge bg-accent text-white mr-1">جديدنا ★</span>' : ''}</p>
+              <p class="text-sm text-slate-500">${p.descAr}</p>
+            </div>
+          </div>
+          <div class="flex items-center gap-3 mt-3">
+            <input type="number" step="0.25" min="0.5" value="${Number(p.price)}" id="price-${p.id}"
+              class="border border-slate-300 rounded-lg px-3 py-2 w-28 focus:outline-none focus:border-primary" dir="ltr" />
+            <span class="text-slate-500 text-sm">د.أ</span>
+            <button onclick="savePrice('${p.id}')" class="bg-primary text-white px-4 py-2 rounded-lg text-sm font-semibold">حفظ</button>
+          </div>
+        </div>`).join('')}
+    </div>`;
+}
+
+async function savePrice(id) {
+  const price = Number(document.getElementById('price-' + id).value);
+  await api(`/admin/products/${id}/price`, { method: 'PATCH', body: JSON.stringify({ price }) });
+  render();
+}
+
+// ============ التقارير المالية ============
+async function renderFinance(main) {
+  const [stats, ledger] = await Promise.all([
+    api('/admin/stats'),
+    api('/admin/ledger?take=30'),
+  ]);
+  main.innerHTML = `
+    <div class="mb-6">
+      <h2 class="text-2xl font-bold">التقارير المالية</h2>
+      <p class="text-slate-500 text-sm">مرحباً ${me.name}، إليك ملخص العمليات المالية</p>
+    </div>
+    <div class="flex flex-wrap gap-4 mb-6">
+      ${statCard('إجمالي الإيرادات', JOD(stats.revenueTotal), '+12%', '💵', 'bg-blue-50')}
+      ${statCard('إجمالي حصص السائقين', JOD(stats.driverTotal), 'تُسوّى مع الوكالات', '🚚', 'bg-orange-50')}
+      ${statCard('إجمالي أرصدة الموردين', JOD(stats.supplierTotal), 'تحت التسوية', '🏭', 'bg-slate-100')}
+      ${statCard('عمولة المنصة المحصلة', JOD(stats.platformTotal), '+8%', '📈', 'bg-green-50')}
+    </div>
+    <div class="bg-white rounded-2xl shadow-card p-5">
+      <h3 class="font-bold mb-4">دفتر الأستاذ المالي (المعاملات)</h3>
+      <table class="w-full text-right">
+        <thead class="bg-slate-50 border-b border-slate-200">
+          <tr>${['رقم الطلب', 'الإجمالي', 'حصة المورد', 'حصة السائق', 'عمولة المنصة', 'الحالة'].map((h) => `<th class="px-3 py-2">${h}</th>`).join('')}</tr>
+        </thead>
+        <tbody>
+          ${ledger.map((o) => `
+            <tr class="border-b border-slate-100">
+              <td class="px-3 py-2.5 font-bold">${o.code}#</td>
+              <td class="px-3 py-2.5 font-semibold">${JOD(o.total)}</td>
+              <td class="px-3 py-2.5 text-slate-500">${JOD(o.supplierShare)}</td>
+              <td class="px-3 py-2.5 text-slate-500">${JOD(o.driverShare)}</td>
+              <td class="px-3 py-2.5 font-bold text-primary">${JOD(o.platformFee)}</td>
+              <td class="px-3 py-2.5">${badge(STATUS_AR, o.status)}</td>
+            </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>`;
+}
+
+// ============ بوابة الدفع ============
+async function renderGateway(main) {
+  const g = await api('/admin/gateway');
+  main.innerHTML = `
+    <h2 class="text-2xl font-bold mb-6">بوابة الدفع والتحويلات</h2>
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
+      <div class="lg:col-span-2 bg-primary-dark text-white rounded-2xl shadow-card p-6">
+        <p class="text-blue-200 text-sm">التدفق المالي المباشر (المقبوض فعلياً)</p>
+        <p class="text-4xl font-bold mt-2" dir="ltr">JOD ${Number(g.capturedTotal).toFixed(2)}</p>
+        <span class="badge bg-green-500 text-white mt-3 inline-block">معدل النجاح ${g.successRate}% ↗</span>
+      </div>
+      <div class="bg-white rounded-2xl shadow-card p-6">
+        <p class="font-bold mb-3">حالة بوابة الدفع</p>
+        <div class="flex items-center gap-2 mb-4">
+          <span class="w-2.5 h-2.5 rounded-full bg-green-500"></span>
+          <span class="text-sm font-semibold">Visa / Mastercard — Active</span>
+        </div>
+        <div class="grid grid-cols-2 gap-3 text-center">
+          <div class="border border-slate-200 rounded-xl p-3"><p class="text-xs text-slate-400">الفشل التقني</p><p class="font-bold text-lg">${g.declineRate}%</p></div>
+          <div class="border border-slate-200 rounded-xl p-3"><p class="text-xs text-slate-400">زمن المعالجة</p><p class="font-bold text-lg" dir="ltr">${(g.avgResponseMs / 1000).toFixed(1)}s</p></div>
+        </div>
+      </div>
+    </div>
+    <div class="bg-white rounded-2xl shadow-card p-5">
+      <h3 class="font-bold mb-4">آخر المعاملات التقنية</h3>
+      <table class="w-full text-right">
+        <thead class="bg-slate-50 border-b border-slate-200">
+          <tr>${['رقم المرجع', 'الطلب', 'القيمة', 'الطريقة', 'زمن الاستجابة', 'الحالة'].map((h) => `<th class="px-4 py-3">${h}</th>`).join('')}</tr>
+        </thead>
+        <tbody>
+          ${g.transactions.map((t) => `
+            <tr class="border-b border-slate-100">
+              <td class="px-4 py-3 font-bold" dir="ltr">#${t.ref}</td>
+              <td class="px-4 py-3">${t.order?.code ?? '—'}</td>
+              <td class="px-4 py-3 font-semibold" dir="ltr">JOD ${Number(t.amount).toFixed(2)}</td>
+              <td class="px-4 py-3" dir="ltr">${t.method === 'ZAINCASH' ? 'ZainCash' : 'Card'} (**** ${t.cardLast4 ?? '----'})</td>
+              <td class="px-4 py-3" dir="ltr">${t.responseMs}ms</td>
+              <td class="px-4 py-3">${badge(TXN_AR, t.status)}</td>
+            </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>`;
+}
+
+if (token) boot();
+</script>
+</body>
+</html>

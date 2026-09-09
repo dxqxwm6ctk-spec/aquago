@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>سجّل وكالتك — GasGO</title>
+<!--
+  نموذج تسجيل الوكالات. يُخدَم ثابتاً من backend/public مثل صفحتَي الخصوصية
+  والدعم، وينادي POST /api/v2/agency-applications — مسار عام بلا مصادقة،
+  محميّ بحدّ معدّل على العنوان وعلى رقم الهاتف.
+
+  ما يدخل من هنا يبقى PENDING_REVIEW. النموذج لا يَعِد بقبول، ونصّه يقول ذلك
+  صراحةً: صفحة توحي بالقبول تصنع وكالةً تنتظر مكالمة لن تأتي.
+-->
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg:#ffffff; --fg:#17212b; --muted:#5a6a7a;
+    --line:#e3e8ee; --accent:#0b7a4b; --card:#f7f9fb; --danger:#c0392b;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#11161c; --fg:#e6edf3; --muted:#9bacbd; --line:#242c35; --accent:#3fbb85; --card:#171e26; --danger:#ff7b6b; }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin:0; background:var(--bg); color:var(--fg);
+    font:16px/1.7 "Segoe UI", Tahoma, system-ui, sans-serif;
+  }
+  main { max-width:640px; margin:0 auto; padding:40px 22px 80px; }
+  header { border-bottom:1px solid var(--line); padding-bottom:18px; margin-bottom:22px; }
+  h1 { font-size:1.6rem; margin:0 0 6px; }
+  .muted { color:var(--muted); font-size:.92rem; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:16px 18px; margin:18px 0; }
+  label { display:block; font-weight:600; font-size:.92rem; margin:16px 0 6px; }
+  .req { color:var(--danger); }
+  input, select, textarea {
+    width:100%; padding:12px; border:1px solid var(--line); border-radius:12px;
+    background:var(--bg); color:var(--fg); font:inherit;
+  }
+  input:focus, select:focus, textarea:focus { outline:2px solid var(--accent); outline-offset:1px; }
+  textarea { resize:vertical; min-height:90px; }
+  .hint { color:var(--muted); font-size:.82rem; margin-top:4px; }
+  button {
+    width:100%; margin-top:24px; padding:14px; border:0; border-radius:12px;
+    background:var(--accent); color:#fff; font:inherit; font-weight:700; cursor:pointer;
+  }
+  button[disabled] { opacity:.6; cursor:default; }
+  #msg { margin-top:16px; padding:14px; border-radius:12px; display:none; font-size:.94rem; }
+  #msg.ok { display:block; background:#e8f7ef; color:#0b6b42; border:1px solid #bfe6d2; }
+  #msg.err { display:block; background:#fdecea; color:#a3261a; border:1px solid #f5c6c0; }
+  @media (prefers-color-scheme: dark) {
+    #msg.ok { background:#10261c; color:#8fe0b8; border-color:#1e4433; }
+    #msg.err { background:#2a1512; color:#ffb4a8; border-color:#4a221c; }
+  }
+  a { color:var(--accent); }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>سجّل وكالتك في GasGO</h1>
+    <p class="muted">املأ بياناتك ويتواصل معك فريقنا لاستكمال الإجراءات.</p>
+  </header>
+
+  <div class="card">
+    <strong>قبل أن تبدأ:</strong> هذا طلب تسجيل لا قبول. يراجع فريقنا كل طلب
+    ويتحقق من البيانات قبل تفعيل أي وكالة على المنصة. لن يُنشر رقمك ولا
+    عنوانك لأحد خارج فريق GasGO.
+  </div>
+
+  <form id="f" novalidate>
+    <label for="name">اسم الوكالة <span class="req">*</span></label>
+    <input id="name" name="name" required maxlength="200" placeholder="مثال: وكالة غاز النور" />
+
+    <label for="businessName">الاسم التجاري المسجَّل</label>
+    <input id="businessName" name="businessName" maxlength="200" placeholder="إن اختلف عن اسم الوكالة" />
+
+    <label for="phoneNumber">رقم الهاتف <span class="req">*</span></label>
+    <input id="phoneNumber" name="phoneNumber" required inputmode="tel" dir="ltr" maxlength="30" placeholder="0791234567" />
+    <p class="hint">رقم أردني محمول — عليه سنتواصل معك.</p>
+
+    <label for="whatsappNumber">رقم الواتساب</label>
+    <input id="whatsappNumber" name="whatsappNumber" inputmode="tel" dir="ltr" maxlength="30" placeholder="اتركه فارغاً إن كان نفس الرقم أعلاه" />
+
+    <label for="areaId">المنطقة</label>
+    <select id="areaId" name="areaId"><option value="">— اختر —</option></select>
+
+    <label for="areaName">المنطقة/الحي (إن لم تجدها في القائمة)</label>
+    <input id="areaName" name="areaName" maxlength="120" placeholder="مثال: أبو علندا" />
+
+    <label for="address">العنوان التفصيلي</label>
+    <input id="address" name="address" maxlength="400" placeholder="الشارع، أقرب علامة مميزة" />
+
+    <label for="licenseNumber">رقم الترخيص</label>
+    <input id="licenseNumber" name="licenseNumber" dir="ltr" maxlength="80" />
+    <p class="hint">اختياري. إن أدخلته سنتحقق منه — إدخاله لا يعني اعتماد الترخيص تلقائياً.</p>
+
+    <label for="note">ملاحظات</label>
+    <textarea id="note" name="note" maxlength="1000" placeholder="ساعات العمل، مناطق التوصيل، عدد المندوبين…"></textarea>
+
+    <button id="btn" type="submit">إرسال الطلب</button>
+    <div id="msg"></div>
+  </form>
+
+  <p class="muted" style="margin-top:28px">
+    بإرسال الطلب أنت توافق على أن يتواصل معك فريق GasGO على الرقم أعلاه.
+    راجع <a href="/privacy/">سياسة الخصوصية</a> و<a href="/support/">صفحة الدعم</a>.
+  </p>
+</main>
+
+<script>
+const API = '/api/v2/agency-applications';
+
+// قائمة المناطق من الخادم. فشلها لا يعطّل النموذج — يبقى حقل النص الحر
+// بجانبها، ومنطقةٌ مكتوبة بخط اليد خيرٌ من طلبٍ لا يُرسَل.
+fetch(API + '/areas')
+  .then((r) => (r.ok ? r.json() : []))
+  .then((areas) => {
+    const sel = document.getElementById('areaId');
+    for (const a of areas) {
+      const o = document.createElement('option');
+      o.value = a.id;
+      o.textContent = a.nameAr;
+      sel.appendChild(o);
+    }
+  })
+  .catch(() => {});
+
+const msg = document.getElementById('msg');
+function show(kind, text) {
+  msg.className = kind;
+  msg.textContent = text;
+  msg.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+document.getElementById('f').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const btn = document.getElementById('btn');
+  const body = {};
+  for (const el of e.target.elements) {
+    if (!el.name) continue;
+    const v = el.value.trim();
+    if (v) body[el.name] = v;
+  }
+  if (!body.name || !body.phoneNumber) {
+    show('err', 'اسم الوكالة ورقم الهاتف مطلوبان.');
+    return;
+  }
+
+  btn.disabled = true;
+  btn.textContent = 'جارٍ الإرسال…';
+  try {
+    const res = await fetch(API, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      // رسالة الخادم بالعربية أصلاً (رقم غير صحيح، طلبات كثيرة) — تُعرض كما هي
+      const m = Array.isArray(data.message) ? data.message.join('، ') : data.message;
+      throw new Error(m || 'تعذّر إرسال الطلب، حاول لاحقاً.');
+    }
+    e.target.reset();
+    show('ok', 'وصلنا طلبك. سيراجعه فريقنا ويتواصل معك على الرقم الذي أدخلته.');
+    btn.textContent = 'أُرسل الطلب';
+  } catch (err) {
+    show('err', err.message);
+    btn.disabled = false;
+    btn.textContent = 'إرسال الطلب';
+  }
+});
+</script>
+</body>
+</html>

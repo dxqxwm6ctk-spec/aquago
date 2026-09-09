@@ -1,0 +1,129 @@
+# AquaGo — بنية التطوير المحلية، نظيرةً لبنية Railway.
+#
+# الغرض ليس «تشغيل الخادم» فحسب بل محاكاة الإنتاج: حاويتا API خلف نفس
+# الصورة، عاملٌ منفصل بدور `worker`، وخطوة هجرة تسبقهما وتخرج — تمامًا
+# كما يفعل `preDeployCommand` في railway.json. ما يعمل هنا يعمل هناك،
+# وما ينكسر هناك ينكسر هنا أولًا.
+#
+# **مخطّط واحد لا اثنان:** GasGO كان يحمل قاعدتَين (legacy + v2) ريثما
+# يكتمل ترحيله، فكان يحتاج `db-init` لإنشاء الثانية. AquaGo بدأ من v2
+# وحده، وهجرة `0_init` تُفعّل PostGIS بنفسها — فلا ملف تهيئة ولا قاعدة
+# ثانية.
+
+services:
+  db:
+    # PostGIS مطلوب: مناطق التغطية polygons حقيقية لا lat/lng مجرّدين
+    image: postgis/postgis:16-3.4-alpine
+    container_name: aquago_db
+    environment:
+      POSTGRES_USER: aqua
+      # افتراضي للتطوير فقط — يُعرَّف في .env للإنتاج
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-aqua_secret}
+      POSTGRES_DB: aquago_v2
+    ports:
+      # 5433 خارجيًا لتفادي التعارض مع PostgreSQL محلي على 5432
+      - "5433:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aqua -d aquago_v2"]
+      interval: 3s
+      timeout: 3s
+      retries: 15
+
+  redis:
+    image: redis:7-alpine
+    container_name: aquago_redis
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 15
+
+  # خطوة الهجرة والبذور — تعمل مرة واحدة وتخرج، نظير `preDeployCommand`
+  # في railway.json. لا `restart` ولا `healthcheck`: عملية قصيرة العمر
+  # بطبيعتها لا خدمة دائمة.
+  migrate:
+    build: ./backend
+    container_name: aquago_migrate
+    entrypoint: ["sh", "docker-migrate.sh"]
+    depends_on:
+      db:
+        condition: service_healthy
+    environment: &common-env
+      DATABASE_URL_V2: postgresql://aqua:${POSTGRES_PASSWORD:-aqua_secret}@db:5432/aquago_v2?schema=public
+      REDIS_URL: redis://redis:6379
+      JWT_SECRET: ${JWT_SECRET:-aquago-dev-secret-change-in-production}
+      NODE_ENV: ${NODE_ENV:-development}
+      CORS_ORIGINS: ${CORS_ORIGINS:-}
+      # `json` افتراضًا رغم NODE_ENV=development: الغرض محاكاة الإنتاج،
+      # وسجلّ بشري هنا يخفي بالضبط ما نتحقّق منه.
+      LOG_FORMAT: ${LOG_FORMAT:-json}
+      LOG_LEVEL: ${LOG_LEVEL:-log}
+      SLOW_REQUEST_MS: ${SLOW_REQUEST_MS:-1000}
+      # نقطة المقاييس مغلقة بلا هذا — القيمة للتطوير المحلي وحده
+      METRICS_TOKEN: ${METRICS_TOKEN:-local-metrics-token}
+      # local يكتب داخل الحاوية — غير مستمر بين إعادة بناء الصورة
+      STORAGE_PROVIDER: ${STORAGE_PROVIDER:-local}
+      STORAGE_LOCAL_PATH: ${STORAGE_LOCAL_PATH:-/app/storage-dev}
+      S3_ENDPOINT: ${S3_ENDPOINT:-http://minio:9000}
+      S3_REGION: ${S3_REGION:-us-east-1}
+      S3_BUCKET: ${S3_BUCKET:-aquago-local}
+      S3_ACCESS_KEY: ${S3_ACCESS_KEY:-aquago-local}
+      S3_SECRET_KEY: ${S3_SECRET_KEY:-aquago-local-secret}
+      S3_PUBLIC_URL: ${S3_PUBLIC_URL:-}
+      # رمز ماستر للتطوير فقط — يُتجاهل تلقائيًا عندما NODE_ENV=production
+      OTP_MASTER_CODE: ${OTP_MASTER_CODE:-123456}
+      SMS_PROVIDER: ${SMS_PROVIDER:-dev}
+      SMS_API_URL: ${SMS_API_URL:-}
+      SMS_API_KEY: ${SMS_API_KEY:-}
+      WHATSAPP_PROVIDER: ${WHATSAPP_PROVIDER:-dev}
+      WHATSAPP_API_URL: ${WHATSAPP_API_URL:-}
+      WHATSAPP_API_KEY: ${WHATSAPP_API_KEY:-}
+      WHATSAPP_SESSION_ID: ${WHATSAPP_SESSION_ID:-}
+      TELEGRAM_PROVIDER: ${TELEGRAM_PROVIDER:-dev}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
+      TELEGRAM_ADMIN_CHAT_IDS: ${TELEGRAM_ADMIN_CHAT_IDS:-}
+      TELEGRAM_WEBHOOK_SECRET: ${TELEGRAM_WEBHOOK_SECRET:-}
+      # صورة postgis المحلية `max_connections` فيها 100 — القيمة هنا
+      # مضبوطة لتطابق القاعدة الفعلية لا خطة الإنتاج المستقبلية.
+      DB_MAX_CONNECTIONS: ${DB_MAX_CONNECTIONS:-90}
+      DB_RESERVED_CONNECTIONS: ${DB_RESERVED_CONNECTIONS:-20}
+      API_INSTANCE_COUNT: ${API_INSTANCE_COUNT:-2}
+      WORKER_INSTANCE_COUNT: ${WORKER_INSTANCE_COUNT:-1}
+      PORT: "3000"
+
+  api:
+    build: ./backend
+    container_name: aquago_api
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        # ينتظر خروج migrate بنجاح (لا حالة تشغيل — عملية قصيرة العمر)
+        condition: service_completed_successfully
+    environment:
+      <<: *common-env
+      ROLE: api
+    ports:
+      - "3000:3000"
+
+  # نظير حاوية العامل على Railway — يستهلك طوابير BullMQ والمهام
+  # المجدولة، بلا خادم HTTP ولا منفذ مكشوف.
+  worker:
+    build: ./backend
+    container_name: aquago_worker
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      <<: *common-env
+      ROLE: worker
+
+volumes:
+  pgdata:

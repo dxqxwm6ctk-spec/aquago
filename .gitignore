@@ -1,0 +1,51 @@
+# ==========================================================================
+# AquaGo — ما لا يدخل المستودع أبدًا
+#
+# القائمة منقولة عن GasGO لأن أسبابها لا تتغيّر بتغيّر السلعة: سرٌّ
+# مسرَّب يبقى مسرَّبًا في تاريخ git حتى لو حُذف لاحقًا، ونسخةُ قاعدة
+# تحمل بيانات زبائن حقيقيين لا يجوز أن تُرفع أصلًا.
+# ==========================================================================
+
+# ---- الأسرار ----
+.env
+.env.local
+*.env.local
+backend/firebase-service-account.json
+customer_app/android/app/google-services.json
+driver_app/android/app/google-services.json
+customer_app/ios/Runner/GoogleService-Info.plist
+driver_app/ios/Runner/GoogleService-Info.plist
+
+# مفاتيح التوقيع — فقدانها يقفل التطبيق عن التحديث للأبد، وتسريبها أسوأ
+*.jks
+*.keystore
+key.properties
+*.p12
+*.key
+# مفتاح App Store Connect API — ios_signing/ يغطّيه، وهذا السطر يمسكه
+# لو نُسخ خارج المجلد بالخطأ (ينزل مرة واحدة ولا يمكن تنزيله ثانية).
+*.p8
+ios_signing/
+
+# ---- نسخ قاعدة البيانات ----
+# تحمل بيانات زبائن حقيقية: أسماء وهواتف وعناوين
+*.dump
+*.sql.gz
+backend/backups/
+
+# ---- مخرجات البناء والاعتماديات ----
+node_modules/
+backend/dist/
+backend/storage-dev/
+**/.dart_tool/
+**/build/
+**/.flutter-plugins
+**/.flutter-plugins-dependencies
+**/pubspec.lock
+
+# ---- بيئات المحرِّرات ----
+.idea/
+*.iml
+.vscode/
+*.swp
+.DS_Store

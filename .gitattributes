@@ -1,0 +1,50 @@
+# ==========================================================================
+# AquaGo — تطبيع نهايات الأسطر
+#
+# التطوير على ويندوز والتشغيل على لينكس/macOS (رانرات GitHub وحاويات
+# Docker). ملف شِل أو وركفلو ينحفظ بنهايات CRLF ينكسر هناك برسالة
+# مضلّلة تماماً — bash يقرأ المحرف \r جزءاً من اسم الأمر فيقول
+# "command not found" أو "bad interpreter" على سكربت سليم تماماً.
+# ==========================================================================
+
+# الافتراضي: يقرّر git، ويخزّن LF في المستودع.
+* text=auto eol=lf
+
+# ---- ما يجب أن يبقى LF مهما كانت المنصّة ----
+# هذه تُنفَّذ على لينكس/macOS، وCRLF فيها عطل لا تنسيق.
+*.sh              text eol=lf
+*.yml             text eol=lf
+*.yaml            text eol=lf
+Dockerfile        text eol=lf
+*.bash            text eol=lf
+gradlew           text eol=lf
+
+# ---- ملفات ويندوز الأصلية ----
+*.bat             text eol=crlf
+*.cmd             text eol=crlf
+*.ps1             text eol=crlf
+
+# ---- ثنائية: لا تُمسّ إطلاقاً ----
+# تطبيع نهايات الأسطر على ملف ثنائي يفسده بصمت.
+*.png             binary
+*.jpg             binary
+*.jpeg            binary
+*.gif             binary
+*.ico             binary
+*.ttf             binary
+*.otf             binary
+*.woff            binary
+*.woff2           binary
+*.pdf             binary
+*.zip             binary
+*.jar             binary
+*.keystore        binary
+*.jks             binary
+*.p12             binary
+*.mobileprovision binary
+
+# ---- ملفات مولَّدة: تُخفى من فروق المراجعة ----
+# ليست مكتوبة بيد أحد، وظهورها يغرق أي مراجعة.
+pubspec.lock            linguist-generated=true
+package-lock.json       linguist-generated=true -diff
+**/GeneratedPluginRegistrant.* linguist-generated=true
