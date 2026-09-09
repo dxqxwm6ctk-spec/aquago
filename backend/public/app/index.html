@@ -1,0 +1,328 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GasGO — توصيل أسطوانات الغاز في الأردن</title>
+<meta name="description" content="GasGO يوصّل لك أسطوانة الغاز على الباب: اطلب من التطبيق، تابع المندوب على الخريطة، وادفع نقداً عند الاستلام.">
+<!--
+  صفحة التسويق (Marketing URL) المطلوبة في App Store Connect وGoogle Play.
+  المتجران يرفضان توجيه Marketing URL إلى لوحة تحكم تطلب تسجيل دخول —
+  لذلك هذه صفحة تعريفية عامة لا تحتاج حساباً، لا /platform ولا /agency.
+
+  تُخدَم ثابتة من backend/public عبر ServeStaticModule (backend/src/app.module.ts)
+  مثل /privacy/ و/support/، فرابطها عنوان الخادم + /app/. ويولّدها
+  tools/build-store-site.js إلى جذر الموقع العام — لا تحرّر netlify/site.
+
+  **ما يُكتب هنا يُقرأ كوعد.** المحتوى محصور فيما تفعله الخدمة فعلاً: لا مهلة
+  توصيل مضمونة، ولا دفع بالبطاقة (نقداً عند الاستلام في هذه النسخة)، ولا دعم
+  على مدار الساعة، ولا أرقام إنجاز لم تتحقق. والوعد الذي لا يُنفَّذ سببُ شكوى
+  ورفضِ مراجعة قبل أن يكون تسويقاً.
+
+  ولا روابط متجر قبل النشر: رابط متجر ميت في صفحة التسويق سببٌ معروف للرفض.
+  بعد النشر بدّل بطاقتَي «قريباً» في قسم #apps بروابط حقيقية.
+-->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@300;400;500;600;700&family=Plus+Jakarta+Sans:wght@600;700;800&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --maroon: #A41442; --maroon-dark: #7D0F33; --gold: #E2A82F;
+    --ink: #111B36; --muted: #687188; --line: #E2E5EC; --bg: #F6F7FB;
+    --green: #1E8E5A;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: var(--bg); -webkit-font-smoothing: antialiased; }
+  body { font-family: 'IBM Plex Sans Arabic', 'Segoe UI', Tahoma, sans-serif; color: var(--ink); overflow-x: hidden; }
+  a { color: var(--maroon); text-decoration: none; }
+  .wrap { max-width: 1240px; margin: 0 auto; padding: 0 40px; }
+  /* الحركة تحترم من أطفأها في نظامه — صفحةٌ تتحرك رغم أنفه إزعاج لا ترحيب */
+  @keyframes gg-rise { from { transform: translateY(14px); opacity: 0 } to { transform: translateY(0); opacity: 1 } }
+  .rise { animation: gg-rise .7s ease-out both; }
+  @media (prefers-reduced-motion: reduce) { .rise { animation: none } }
+
+  .nav { position: sticky; top: 0; z-index: 50; background: rgba(255,255,255,.86); backdrop-filter: blur(18px); border-bottom: 1px solid var(--line) }
+  .nav-in { height: 82px; display: flex; align-items: center; gap: 40px }
+  .brand { display: flex; align-items: center; gap: 12px }
+  .brand-word { font: 800 30px 'Plus Jakarta Sans'; letter-spacing: -.04em; color: var(--maroon); direction: ltr }
+  .nav-links { display: flex; align-items: center; gap: 34px; flex-wrap: wrap; min-width: 0; font-weight: 500; font-size: 17px }
+  .nav-links a { color: var(--muted) }
+  .pill { display: inline-flex; align-items: center; gap: 10px; border-radius: 999px; font-weight: 600 }
+  .cta-solid { background: var(--maroon); color: #fff; font-size: 17px; padding: 14px 28px; box-shadow: 0 10px 26px rgba(164,20,66,.28) }
+
+  .hero { position: relative; background: radial-gradient(120% 90% at 78% 12%, var(--maroon) 0%, var(--maroon-dark) 88%); color: #fff; overflow: hidden }
+  .ring { position: absolute; border-radius: 999px; border: 1px solid rgba(226,168,47,.16) }
+  .hero-in { padding: 100px 40px 112px; display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 60px; align-items: center; position: relative }
+  .badge { display: inline-flex; align-items: center; gap: 12px; align-self: flex-start; background: rgba(226,168,47,.14); border: 1px solid rgba(226,168,47,.44); border-radius: 999px; padding: 10px 20px; font-weight: 500; font-size: 15px; color: #FBF1DC }
+  .dot { width: 9px; height: 9px; border-radius: 999px; background: var(--gold) }
+  h1 { font-weight: 700; font-size: clamp(38px, 5.4vw, 66px); line-height: 1.16; letter-spacing: -.01em; margin: 0; text-wrap: balance }
+  .lead { font-weight: 300; font-size: clamp(17px, 2vw, 22px); line-height: 1.75; color: rgba(255,255,255,.82); max-width: 540px; margin: 0 }
+  .cta-white { background: #fff; color: var(--maroon); font-size: 19px; padding: 20px 38px; box-shadow: 0 18px 44px rgba(17,27,54,.28) }
+  .cta-ghost { border: 1.5px solid rgba(255,255,255,.5); color: #fff; font-weight: 500; font-size: 19px; padding: 19px 34px }
+
+  .strip { background: #fff; border-bottom: 1px solid var(--line) }
+  .strip-in { padding: 34px 40px; display: flex; align-items: center; justify-content: space-between; gap: 30px; flex-wrap: wrap }
+  .strip-item { display: flex; align-items: center; gap: 10px; font-weight: 500; font-size: 15px }
+  .strip-dot { width: 8px; height: 8px; border-radius: 999px; background: var(--green) }
+
+  section { padding-top: 104px }
+  .eyebrow { font: 600 14px 'Plus Jakarta Sans'; letter-spacing: .14em; text-transform: uppercase; color: var(--maroon); direction: ltr }
+  h2 { font-weight: 700; font-size: clamp(27px, 3.4vw, 40px); line-height: 1.3; margin: 14px 0 0; text-wrap: balance }
+  .sub { font-weight: 300; font-size: 18px; line-height: 1.8; color: var(--muted); max-width: 640px; margin: 14px 0 0 }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(270px, 1fr)); gap: 22px; margin-top: 42px }
+  .card { background: #fff; border: 1px solid var(--line); border-radius: 22px; padding: 30px }
+  .card h3 { font-weight: 600; font-size: 19px; margin: 18px 0 8px }
+  .card p { font-weight: 300; font-size: 16px; line-height: 1.8; color: var(--muted); margin: 0 }
+  .icon { width: 50px; height: 50px; border-radius: 15px; background: rgba(164,20,66,.08); display: flex; align-items: center; justify-content: center }
+  .step-n { width: 42px; height: 42px; border-radius: 999px; background: var(--maroon); color: #fff; font: 700 18px 'Plus Jakarta Sans'; display: flex; align-items: center; justify-content: center }
+
+  .foot { margin-top: 104px; background: var(--ink); color: #fff }
+  .foot-in { padding: 68px 40px 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 46px }
+  .foot h4 { font-weight: 600; font-size: 17px; margin: 0 }
+  .foot a, .foot p { font-weight: 300; font-size: 16px; color: rgba(255,255,255,.62) }
+  .foot-col { display: flex; flex-direction: column; gap: 15px }
+  .foot-bottom { padding: 38px 40px; margin-top: 54px; border-top: 1px solid rgba(255,255,255,.12); display: flex; align-items: center; justify-content: space-between; gap: 24px; flex-wrap: wrap; font-weight: 300; font-size: 15px; color: rgba(255,255,255,.45) }
+  .foot-bottom a { color: rgba(255,255,255,.45); font-size: 15px }
+
+  @media (max-width: 700px) {
+    .wrap, .hero-in, .strip-in, .foot-in, .foot-bottom { padding-left: 20px; padding-right: 20px }
+    .nav-links { display: none }
+    section { padding-top: 68px }
+    .foot { margin-top: 68px }
+  }
+</style>
+</head>
+<body>
+
+<div class="nav">
+  <div class="wrap nav-in">
+    <a href="#top" class="brand">
+      <svg width="40" height="40" viewBox="0 0 120 120" style="overflow:visible" aria-hidden="true">
+        <path d="M60 22 a38 38 0 1 0 34 55" fill="none" stroke="#A41442" stroke-width="17" stroke-linecap="round"/>
+        <path d="M60 60 H97" fill="none" stroke="#A41442" stroke-width="17" stroke-linecap="round"/>
+        <path d="M97 33 c11 10 15 18 15 25 0 9-7 15-15 15 s-15-6-15-15 c0-7 4-15 15-25 z" fill="#E2A82F"/>
+      </svg>
+      <div class="brand-word">Gas<span style="color:var(--gold)">GO</span></div>
+    </a>
+    <div class="nav-links">
+      <a href="#features">المميزات</a>
+      <a href="#how">كيف تطلب</a>
+      <a href="#apps">تطبيقاتنا</a>
+      <a href="/support/">الدعم</a>
+    </div>
+    <div style="flex:1"></div>
+    <a href="#apps" class="pill cta-solid">تطبيقاتنا</a>
+  </div>
+</div>
+
+<div id="top" class="hero">
+  <div class="ring" style="left:-240px; top:-180px; width:900px; height:900px"></div>
+  <div class="ring" style="left:-80px; top:-20px; width:620px; height:620px; border-color:rgba(226,168,47,.12)"></div>
+  <div class="wrap hero-in">
+    <div class="rise" style="display:flex; flex-direction:column; gap:28px">
+      <div class="badge"><div class="dot"></div>توصيل أسطوانات الغاز في الأردن</div>
+      <h1>غازك عند بابك<br><span style="color:var(--gold)">بثلاث نقرات</span></h1>
+      <p class="lead">اطلب أسطوانة الغاز من هاتفك، تابع المندوب على الخريطة لحظة بلحظة، وادفع نقداً عند الاستلام. السعر يظهر كاملاً قبل التأكيد.</p>
+      <div style="display:flex; align-items:center; gap:16px; flex-wrap:wrap">
+        <a href="#how" class="pill cta-white">شوف كيف بتشتغل</a>
+        <a href="/support/" class="pill cta-ghost">تواصل معنا</a>
+      </div>
+    </div>
+
+    <div class="rise" style="display:flex; justify-content:center; min-width:0">
+      <div style="position:relative; width:min(330px,100%); border-radius:46px; background:var(--ink); padding:10px; box-shadow:0 50px 110px rgba(17,27,54,.5), inset 0 0 0 2px rgba(255,255,255,.1)">
+        <div style="position:absolute; left:50%; top:22px; transform:translateX(-50%); width:100px; height:24px; border-radius:999px; background:var(--ink); z-index:3"></div>
+        <div style="border-radius:37px; background:var(--bg); overflow:hidden">
+          <div style="background:#fff; padding:48px 18px 16px; border-radius:0 0 22px 22px">
+            <div style="display:flex; align-items:center; gap:10px">
+              <svg width="28" height="28" viewBox="0 0 120 120" style="overflow:visible" aria-hidden="true">
+                <path d="M60 22 a38 38 0 1 0 34 55" fill="none" stroke="#A41442" stroke-width="17" stroke-linecap="round"/>
+                <path d="M60 60 H97" fill="none" stroke="#A41442" stroke-width="17" stroke-linecap="round"/>
+                <path d="M97 33 c11 10 15 18 15 25 0 9-7 15-15 15 s-15-6-15-15 c0-7 4-15 15-25 z" fill="#E2A82F"/>
+              </svg>
+              <div style="font:800 21px 'Plus Jakarta Sans'; color:var(--maroon); direction:ltr">Gas<span style="color:var(--gold)">GO</span></div>
+            </div>
+          </div>
+          <div style="padding:16px 18px 24px; display:flex; flex-direction:column; gap:11px">
+            <div style="font-weight:600; font-size:14px">اختر نوع الأسطوانة</div>
+            <div style="background:#fff; border:1.5px solid var(--maroon); border-radius:15px; padding:13px; display:flex; align-items:center; justify-content:space-between; gap:10px">
+              <div>
+                <div style="font-weight:600; font-size:13px">أسطوانة غاز منزلية</div>
+                <div style="font-weight:300; font-size:12px; color:var(--muted)">سعة 12.5 كغم</div>
+              </div>
+              <div style="font:700 15px 'Plus Jakarta Sans'; color:var(--maroon); direction:ltr">7.000</div>
+            </div>
+            <div style="background:#fff; border:1px solid var(--line); border-radius:15px; padding:13px; display:flex; align-items:center; justify-content:space-between; gap:10px">
+              <div>
+                <div style="font-weight:600; font-size:13px">أسطوانة غاز تجارية</div>
+                <div style="font-weight:300; font-size:12px; color:var(--muted)">سعة 50 كغم</div>
+              </div>
+              <div style="font:700 15px 'Plus Jakarta Sans'; color:var(--muted); direction:ltr">28.000</div>
+            </div>
+            <div style="margin-top:4px; background:var(--maroon); color:#fff; border-radius:999px; padding:13px; text-align:center; font-weight:600; font-size:14px">متابعة الطلب</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="strip">
+  <div class="wrap strip-in">
+    <div style="font-weight:500; font-size:16px; color:var(--muted)">طلبك يمرّ عبر وكالات غاز مرخّصة</div>
+    <div style="display:flex; align-items:center; gap:28px; flex-wrap:wrap">
+      <div class="strip-item"><div class="strip-dot"></div>وكالات معتمدة</div>
+      <div class="strip-item"><div class="strip-dot"></div>دفع نقدي عند الاستلام</div>
+      <div class="strip-item"><div class="strip-dot"></div>تتبّع مباشر للمندوب</div>
+    </div>
+  </div>
+</div>
+
+<section id="features" class="wrap">
+  <div class="eyebrow">Why GasGO</div>
+  <h2>كل شي كان يزعجك بطلب الغاز… حلّيناه</h2>
+  <p class="sub">لا انتظار على الهاتف، ولا مفاصلة على السعر عند الباب. كل طلب موثّق من لحظة الضغط حتى الاستلام.</p>
+  <div class="grid">
+    <div class="card">
+      <div class="icon"><svg width="25" height="25" viewBox="0 0 24 24" fill="none" stroke="#A41442" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="10" r="3"/><path d="M12 21s7-6.2 7-11a7 7 0 1 0-14 0c0 4.8 7 11 7 11z"/></svg></div>
+      <h3>تتبّع حيّ</h3>
+      <p>ترى موقع المندوب على الخريطة من لحظة انطلاقه حتى وصوله — بدل أن تنتظر بلا خبر.</p>
+    </div>
+    <div class="card">
+      <div class="icon"><svg width="25" height="25" viewBox="0 0 24 24" fill="none" stroke="#A41442" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1v22"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg></div>
+      <h3>سعر واضح قبل التأكيد</h3>
+      <p>سعر الأسطوانة وعمولة الخدمة تظهر كاملة قبل الإرسال — لا مبالغ تُضاف بعده.</p>
+    </div>
+    <div class="card">
+      <div class="icon"><svg width="25" height="25" viewBox="0 0 24 24" fill="none" stroke="#A41442" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="m9 12 2 2 4-4"/></svg></div>
+      <h3>وكالات معتمدة</h3>
+      <p>طلبك يذهب إلى وكالة غاز مرخّصة، والمندوب تابع لها ومعروف الهوية.</p>
+    </div>
+    <div class="card">
+      <div class="icon"><svg width="25" height="25" viewBox="0 0 24 24" fill="none" stroke="#A41442" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="20" height="12" rx="2"/><circle cx="12" cy="12" r="2.5"/></svg></div>
+      <h3>دفع نقدي عند الاستلام</h3>
+      <p>لا نطلب بيانات بطاقات مصرفية داخل التطبيق إطلاقاً.</p>
+    </div>
+    <div class="card">
+      <div class="icon"><svg width="25" height="25" viewBox="0 0 24 24" fill="none" stroke="#A41442" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M9 15h6"/></svg></div>
+      <h3>سجلّ طلباتك</h3>
+      <p>فواتيرك وطلباتك السابقة محفوظة في مكان واحد داخل التطبيق.</p>
+    </div>
+    <div class="card">
+      <div class="icon"><svg width="25" height="25" viewBox="0 0 24 24" fill="none" stroke="#A41442" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></div>
+      <h3>دعم داخل التطبيق</h3>
+      <p>تفتح محادثة مباشرة مع فريقنا من شاشة الدعم، ويردّ عليك بالعربي.</p>
+    </div>
+  </div>
+</section>
+
+<section id="how" class="wrap">
+  <div class="eyebrow">How it works</div>
+  <h2>من الطلب حتى الباب</h2>
+  <div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(215px,1fr))">
+    <div class="card">
+      <div class="step-n">١</div>
+      <h3>حدّد عنوانك</h3>
+      <p>ثبّت الدبّوس على الخريطة أو اختر عنواناً محفوظاً، واحفظه لطلباتك القادمة.</p>
+    </div>
+    <div class="card">
+      <div class="step-n">٢</div>
+      <h3>اختر الأسطوانة</h3>
+      <p>النوع والكمية، والأسعار ظاهرة قبل الإرسال — لا مفاجآت عند الباب.</p>
+    </div>
+    <div class="card">
+      <div class="step-n">٣</div>
+      <h3>أرسل الطلب</h3>
+      <p>تستقبله وكالة غاز معتمدة قريبة منك، ويصلك إشعار فور قبوله.</p>
+    </div>
+    <div class="card">
+      <div class="step-n">٤</div>
+      <h3>تابع المندوب</h3>
+      <p>ترى موقعه على الخريطة من لحظة انطلاقه حتى وصوله إليك.</p>
+    </div>
+    <div class="card">
+      <div class="step-n">٥</div>
+      <h3>استلم وادفع نقداً</h3>
+      <p>وتصلك فاتورة داخل التطبيق، ويمكنك تقييم الخدمة.</p>
+    </div>
+  </div>
+</section>
+
+<section id="apps" class="wrap">
+  <div class="eyebrow">Our apps</div>
+  <h2>تطبيقات GasGO</h2>
+  <p class="sub">تطبيق للزبون يطلب ويتابع، وتطبيق للمندوب يستقبل الطلبات ويوصّلها.</p>
+  <div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(300px,1fr))">
+    <div class="card" data-fill="stores" style="background:linear-gradient(160deg,#fff,#FBF6F8)">
+      <h3 style="margin-top:0">تطبيق الزبون</h3>
+      <p>اطلب، تتبّع، وادفع نقداً عند الاستلام. مع سجل طلباتك وعناوينك المحفوظة.</p>
+      <p style="margin-top:16px; color:var(--maroon); font-weight:500">قريباً على App Store و Google Play</p>
+    </div>
+    <div class="card" data-fill="stores" style="background:linear-gradient(160deg,#fff,#F5F7FB)">
+      <h3 style="margin-top:0">تطبيق المندوب — GasGO Driver</h3>
+      <p>يستقبل الطلبات القريبة، يتنقّل بالخريطة، ويسجّل التسليم. تابع لوكالة معتمدة.</p>
+      <p style="margin-top:16px; color:var(--maroon); font-weight:500">قريباً على App Store و Google Play</p>
+    </div>
+  </div>
+</section>
+
+<section class="wrap">
+  <div class="card" style="background:linear-gradient(140deg,var(--maroon),var(--maroon-dark)); border:0; color:#fff; padding:48px 40px; display:flex; align-items:center; justify-content:space-between; gap:26px; flex-wrap:wrap">
+    <div>
+      <h2 style="margin:0; color:#fff">محتاج مساعدة؟</h2>
+      <p style="margin:10px 0 0; font-weight:300; font-size:17px; color:rgba(255,255,255,.82)">فريق الدعم يرد عليك — من داخل التطبيق أو على البريد.</p>
+    </div>
+    <div style="display:flex; gap:14px; flex-wrap:wrap">
+      <a href="/support/" class="pill cta-white" style="font-size:17px; padding:16px 30px">صفحة الدعم</a>
+      <a href="mailto:tarqywsf734@gmail.com" class="pill cta-ghost" style="font-size:17px; padding:15px 28px">راسلنا</a>
+    </div>
+  </div>
+</section>
+
+<div class="foot">
+  <div class="wrap foot-in">
+    <div class="foot-col">
+      <div class="brand">
+        <svg width="40" height="40" viewBox="0 0 120 120" style="overflow:visible" aria-hidden="true">
+          <path d="M60 22 a38 38 0 1 0 34 55" fill="none" stroke="#FFFFFF" stroke-width="17" stroke-linecap="round"/>
+          <path d="M60 60 H97" fill="none" stroke="#FFFFFF" stroke-width="17" stroke-linecap="round"/>
+          <path d="M97 33 c11 10 15 18 15 25 0 9-7 15-15 15 s-15-6-15-15 c0-7 4-15 15-25 z" fill="#E2A82F"/>
+        </svg>
+        <div class="brand-word" style="color:#fff">Gas<span style="color:var(--gold)">GO</span></div>
+      </div>
+      <p style="line-height:1.8; max-width:320px; margin:0">توصيل أسطوانات الغاز المنزلي والتجاري في الأردن، عبر وكالات مرخّصة.</p>
+    </div>
+
+    <div class="foot-col">
+      <h4>التطبيق</h4>
+      <a href="#features">المميزات</a>
+      <a href="#how">كيف تطلب</a>
+      <a href="#apps">تطبيقاتنا</a>
+    </div>
+
+    <div class="foot-col">
+      <h4>السياسات</h4>
+      <a href="/privacy/">سياسة الخصوصية</a>
+      <a href="/terms/">شروط الاستخدام</a>
+    </div>
+
+    <div class="foot-col">
+      <h4>تواصل معنا</h4>
+      <a href="/support/">الدعم والمساعدة</a>
+      <a href="mailto:tarqywsf734@gmail.com" style="direction:ltr; text-align:right">tarqywsf734@gmail.com</a>
+      <p style="margin:0">عمّان، الأردن</p>
+    </div>
+  </div>
+
+  <div class="wrap foot-bottom">
+    <div>© 2026 GasGO. جميع الحقوق محفوظة.</div>
+    <div style="display:flex; align-items:center; gap:26px">
+      <a href="/privacy/">الخصوصية</a>
+      <a href="/terms/">الشروط</a>
+      <a href="/support/">الدعم</a>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>

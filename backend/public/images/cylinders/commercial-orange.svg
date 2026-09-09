@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 480" width="240" height="480">
+  <defs>
+    <linearGradient id="bodyOrange" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#b0480f"/>
+      <stop offset="18%" stop-color="#d5661d"/>
+      <stop offset="50%" stop-color="#f28b3a"/>
+      <stop offset="82%" stop-color="#d5661d"/>
+      <stop offset="100%" stop-color="#a2410c"/>
+    </linearGradient>
+    <linearGradient id="capOrange" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#2b2b2b"/>
+      <stop offset="50%" stop-color="#454545"/>
+      <stop offset="100%" stop-color="#232323"/>
+    </linearGradient>
+    <linearGradient id="brass2" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#e0b358"/>
+      <stop offset="100%" stop-color="#a97a2c"/>
+    </linearGradient>
+  </defs>
+
+  <ellipse cx="120" cy="452" rx="74" ry="15" fill="#1c1c1c"/>
+  <rect x="48" y="386" width="144" height="52" rx="10" fill="url(#capOrange)"/>
+
+  <rect x="36" y="140" width="168" height="270" rx="30" fill="url(#bodyOrange)"/>
+
+  <path d="M56 140 Q56 84 92 72 L148 72 Q184 84 184 140 Z" fill="url(#capOrange)"/>
+
+  <rect x="74" y="48" width="28" height="30" rx="6" fill="#1e1e1e"/>
+  <rect x="138" y="48" width="28" height="30" rx="6" fill="#1e1e1e"/>
+
+  <rect x="102" y="32" width="36" height="26" rx="6" fill="url(#brass2)"/>
+  <circle cx="120" cy="26" r="14" fill="url(#brass2)"/>
+
+  <g transform="translate(120,270)">
+    <polygon points="0,-52 56,48 -56,48" fill="#ffffff"/>
+    <polygon points="0,-52 56,48 -56,48" fill="none" stroke="#1a1a1a" stroke-width="6" stroke-linejoin="round"/>
+    <path d="M0 -16 C11 -2 13 9 5 18 C9 13 9 6 2 -1 C5 9 -2 16 -7 22 C-11 13 -7 4 0 -16 Z" fill="#1a1a1a"/>
+  </g>
+
+  <text x="120" y="360" text-anchor="middle" font-family="Arial, sans-serif" font-size="24" font-weight="700" fill="#ffffff">50 KG</text>
+</svg>
