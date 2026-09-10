@@ -1,4 +1,5 @@
 import 'package:driver_app/core/api_client.dart';
+import 'package:driver_app/core/driver_models.dart';
 import 'package:driver_app/core/theme/aqua_theme.dart';
 import 'package:driver_app/screens/driver_shell.dart';
 import 'package:driver_app/state/driver_state.dart';
@@ -46,3 +47,52 @@ Future<DriverState> pumpSignedInApp(WidgetTester tester) async {
   await tester.pump(const Duration(milliseconds: 300));
   return state;
 }
+
+/// طلبٌ مفتوح بصيغة ما يردّه `/driver/orders`.
+DriverOrder testDriverOrder({String status = 'DRIVER_ASSIGNED'}) =>
+    DriverOrder.fromJson({
+      'id': 'order-uuid-1',
+      'code': 'AQ-1042',
+      'status': status,
+      'addressText': 'خلدا · شارع وصفي التل، بناية 24',
+      'total': '5.250',
+      'notes': 'الرجاء الاتصال عند الوصول، الدرج على اليمين.',
+      'deliveryLat': 31.9930,
+      'deliveryLng': 35.8480,
+      'items': const [
+        {
+          'qty': 2,
+          'bottleType': {'nameAr': 'قارورة مياه 18.9 لتر'},
+        },
+      ],
+      'customer': const {'name': 'الحسن', 'phone': '+962790000000'},
+    });
+
+/// عرضٌ معلّق بصيغة `/driver/offers/current`.
+DriverOffer testDriverOffer({int remainingSeconds = 45}) =>
+    DriverOffer.fromJson({
+      'id': 'offer-1',
+      'remainingSeconds': remainingSeconds,
+      'zone': 'خلدا',
+      'order': {
+        'id': 'order-uuid-1',
+        'code': 'AQ-1042',
+        'status': 'AGENCY_ASSIGNED',
+        'addressText': 'خلدا · شارع وصفي التل، بناية 24',
+        'total': '5.250',
+        'items': const [
+          {
+            'qty': 2,
+            'bottleType': {'nameAr': 'قارورة مياه 18.9 لتر'},
+          },
+        ],
+      },
+    });
+
+final testDriverStats = DriverStats.fromJson(const {
+  'completedToday': 3,
+  'completedTotal': 58,
+  'rating': '4.9',
+  'ratingCount': 21,
+  'status': 'AVAILABLE',
+});

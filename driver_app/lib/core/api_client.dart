@@ -192,6 +192,21 @@ class ApiClient {
   Future<Map<String, dynamic>> get(String path) =>
       _send(path, (h) => http.get(_uri(path), headers: h), 'GET $path');
 
+  /// نداءٌ يردّ **مصفوفة** لا كائناً (الطلبات، أسباب الإلغاء).
+  ///
+  /// `_decode` يلفّ المصفوفة في `{'data': […]}` لتوحيد نوع الإرجاع، وقارئها
+  /// كان عليه أن يعرف تلك التفصيلة الداخلية ويفكّها في كل موضع — وينساها في
+  /// واحد فيقرأ قائمةً فارغة بلا خطأ.
+  Future<List<Map<String, dynamic>>> getList(String path) async {
+    final res = await get(path);
+    final data = res['data'];
+    if (data is! List) return const [];
+    return data
+        .whereType<Map>()
+        .map((e) => Map<String, dynamic>.from(e))
+        .toList(growable: false);
+  }
+
   Future<Map<String, dynamic>> post(String path, Map<String, dynamic> body) =>
       _send(
         path,

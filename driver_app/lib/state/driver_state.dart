@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 
 import '../core/api_client.dart';
+import '../core/driver_models.dart';
 import '../core/offer_alert.dart';
 import '../core/push_service.dart';
 import '../core/location_broadcast.dart';
@@ -34,6 +35,162 @@ class DriverState extends ChangeNotifier {
 
   DriverScreen screen = DriverScreen.shift;
   bool online = true;
+
+  // ───────────────────── بيانات الخادم ─────────────────────
+
+  /// العرض المعلّق الحالي — `null` حين لا عرض.
+  DriverOffer? offer;
+
+  /// الطلب المفتوح على السائق الآن.
+  DriverOrder? currentOrder;
+
+  /// إحصائيات السائق (توصيلات وتقييم — لا أرباح، انظر [DriverStats]).
+  DriverStats? stats;
+
+  /// سجلّ الطلبات — آخر خمسين.
+  List<DriverOrder> orders = const [];
+
+  bool loadingData = false;
+  String? dataError;
+
+  /// جارٍ قبول عرض أو تحديث حالة — يمنع ضغطتين متتاليتين.
+  bool busy = false;
+
+  /// سبب رفض آخر إجراء كما يقوله الخادم.
+  String? actionError;
+
+  /// **يحمّل ما تعرضه شاشات السائق.**
+  ///
+  /// الثلاثة معاً: العرض والإحصائيات والطلبات تُعرض في نفس اللحظة، وتسلسلها
+  /// كان يضاعف الانتظار على شبكة الهاتف بلا سبب.
+  Future<void> loadDriverData() async {
+    if (!api.isAuthenticated || loadingData) return;
+    loadingData = true;
+    dataError = null;
+    notifyListeners();
+    try {
+      final results = await Future.wait([
+        api.get('/driver/offers/current'),
+        api.get('/driver/stats'),
+        api.getList('/driver/orders'),
+      ]);
+
+      final offerJson = (results[0] as Map<String, dynamic>)['offer'];
+      offer = offerJson is Map
+          ? DriverOffer.fromJson(Map<String, dynamic>.from(offerJson))
+          : null;
+
+      stats = DriverStats.fromJson(results[1] as Map<String, dynamic>);
+
+      orders = (results[2] as List<Map<String, dynamic>>)
+          .map(DriverOrder.fromJson)
+          .toList(growable: false);
+      // الطلب المفتوح يُشتقّ من السجلّ لا يُطلب على حدة: `/driver/orders`
+      // يردّه ضمنها مرتَّباً، ونداءٌ ثانٍ لأجله رحلةٌ بلا زيادة معرفة.
+      currentOrder = orders.where((o) => o.isActive).firstOrNull;
+    } on ApiException catch (e) {
+      dataError = e.message;
+    } catch (e) {
+      dataError = 'تعذّر تحميل بياناتك — تحقّق من اتصالك';
+      debugPrint('[driver] $e');
+    } finally {
+      loadingData = false;
+      notifyListeners();
+    }
+  }
+
+  /// **قبول العرض.**
+  ///
+  /// الخادم يحمي القبول ذرّياً: عرضان لطلبٍ واحد لا يُقبلان معاً، والخاسر
+  /// يُردّ برسالة. عرضُ رسالته أصدق من ابتلاعها وترك السائق ينتظر طلباً أخذه
+  /// غيره.
+  Future<void> acceptOffer() async {
+    final id = offer?.id;
+    if (id == null || busy) return;
+    busy = true;
+    actionError = null;
+    notifyListeners();
+    // النغمة تُسكت أولاً: العرض لم يعد بانتظار ردّ، وبقاؤها ترنّ بعد
+    // القبول (§9.2).
+    unawaited(OfferAlert.instance.stop());
+    try {
+      await api.post('/driver/offers/$id/accept', const {});
+      offer = null;
+      screen = DriverScreen.detail;
+      await loadDriverData();
+    } on ApiException catch (e) {
+      actionError = e.message;
+      // العرض انتهى أو أخذه غيره — تُنظَّف الشاشة بقراءةٍ جديدة بدل إبقاء
+      // بطاقةٍ لعرضٍ لم يعد قائماً.
+      await loadDriverData();
+    } catch (e) {
+      actionError = 'تعذّر قبول العرض — تحقّق من اتصالك';
+      debugPrint('[driver] $e');
+    } finally {
+      busy = false;
+      notifyListeners();
+    }
+  }
+
+  Future<void> rejectOffer() async {
+    final id = offer?.id;
+    if (id == null || busy) return;
+    busy = true;
+    notifyListeners();
+    try {
+      unawaited(OfferAlert.instance.stop());
+      await api.post('/driver/offers/$id/reject', const {});
+      offer = null;
+    } catch (e) {
+      debugPrint('[driver] رفض العرض: $e');
+    } finally {
+      busy = false;
+      notifyListeners();
+    }
+  }
+
+  /// **تقدّم التوصيل** — الحالة التالية يفرضها الخادم لا ضغطةٌ محلية.
+  ///
+  /// كانت المراحل تتقدّم بضغطةٍ في التطبيق وحده: يرى السائق «تم التسليم»
+  /// وحالةُ الطلب على الخادم لم تتغيّر، والزبون ينتظر شاحنةً وصلت.
+  Future<void> advanceOrder() async {
+    final order = currentOrder;
+    final next = order?.nextStatus;
+    if (order == null || next == null || busy) return;
+    busy = true;
+    actionError = null;
+    notifyListeners();
+    try {
+      await api.post('/driver/orders/${order.id}/status', {'status': next});
+      await loadDriverData();
+      // الطلب اكتمل ⇐ لا شاشة توصيلٍ بعده.
+      if (currentOrder == null) screen = DriverScreen.shift;
+    } on ApiException catch (e) {
+      actionError = e.message;
+    } catch (e) {
+      actionError = 'تعذّر تحديث الحالة — تحقّق من اتصالك';
+      debugPrint('[driver] $e');
+    } finally {
+      busy = false;
+      notifyListeners();
+    }
+  }
+
+  /// يبلّغ الخادم بالوصول إلى باب الزبون — لا ينقل الحالة.
+  Future<void> reportArrived() async {
+    final order = currentOrder;
+    if (order == null) return;
+    try {
+      final p = location.lastSent;
+      await api.post('/driver/orders/${order.id}/arrived', {
+        if (p != null) 'lat': p.latitude,
+        if (p != null) 'lng': p.longitude,
+      });
+    } catch (e) {
+      // خبرٌ لا حالة: فشلُه لا يمنع السائق من إتمام التسليم.
+      debugPrint('[driver] تعذّر تبليغ الوصول: $e');
+    }
+  }
 
   /// بثّ موقع السائق — يتبع مفتاح الوردية.
   ///
@@ -91,6 +248,27 @@ class DriverState extends ChangeNotifier {
     // بناء الحالة كان سيسبق التوكن ويفشل بلا سبب ظاهر.
     _syncBroadcast();
     notifyListeners();
+    // العرض المعلّق يُقرأ عند الإقلاع: عرضٌ وصل والتطبيق مغلق كان يضيع —
+    // الـSocket لا يُسلّم ما فات، والمؤقّت يمضي على السائق وهو لا يدري.
+    unawaited(loadDriverData());
+  }
+
+  /// يضع طلباً مفتوحاً وعرضاً بلا رحلة شبكة — للاختبار وحده.
+  ///
+  /// شاشات السائق صارت تقرأ من الخادم، فاختبارُ عرضها كان يحتاج خادماً
+  /// ليقيس واجهةً لا شبكة فيها.
+  @visibleForTesting
+  void setDataForTest({
+    DriverOrder? order,
+    DriverOffer? pendingOffer,
+    DriverStats? driverStats,
+    List<DriverOrder>? history,
+  }) {
+    currentOrder = order;
+    offer = pendingOffer;
+    stats = driverStats;
+    if (history != null) orders = history;
+    notifyListeners();
   }
 
   /// نفس معالج انتهاء الجلسة — مكشوف للاختبار.
@@ -128,6 +306,7 @@ class DriverState extends ChangeNotifier {
       );
       user = Map<String, dynamic>.from(res['user'] as Map);
       unawaited(PushService.instance.init(api));
+      unawaited(loadDriverData());
       unawaited(refreshUnreadNotifications(api));
     } on SocialSignInCancelled {
       // إلغاءٌ مقصود — لا رسالة خطأ.
@@ -157,48 +336,11 @@ class DriverState extends ChangeNotifier {
   /// لا حرفيًا، وإلا حذّر المحلّل من محارف اتجاه غير مرئية في الكود.
   static const String driverPlate = 'بيك أب \u{2066}43-2718\u{2069} · عمّان';
 
-  // إحصائيات اليوم — بيانات وهمية ثابتة كما في التصميم الأصلي.
-  static const String ordersToday = '11';
-  static const String earningsToday = '18.750';
-  static const String rating = '4.9';
-
-  // بيانات الطلب الحالي (mock) — طلب واحد فقط في هذا العرض التصميمي.
-  static const String orderId = 'AQ-1042';
-  static const String orderDistance = '2.1 كم';
-  static const String orderItems = 'قارورة 18.9 لتر × 2';
-  static const String orderAddress = 'خلدا · شارع وصفي التل، بناية 24';
-  static const String cashToCollect = '5.250';
-  static const String customerName = 'الحسن';
-  static const String customerNote =
-      'الرجاء الاتصال عند الوصول، الدرج على اليمين.';
-  static const String etaText = '2.1 كم · 9 دقائق';
-
   static const List<DeliveryStage> stages = [
     DeliveryStage(label: 'تم قبول الطلب', time: '8:04 ص'),
     DeliveryStage(label: 'تحميل القوارير من المركبة', time: '8:09 ص'),
     DeliveryStage(label: 'وصلت إلى العنوان', time: 'متوقّع 8:31 ص'),
     DeliveryStage(label: 'تم التسليم والتحصيل', time: '—'),
-  ];
-
-  // الأرباح
-  static const String weeklyEarnings = '96.500';
-  static const List<double> weeklyBars = [
-    0.38,
-    0.56,
-    0.44,
-    0.72,
-    0.60,
-    0.88,
-    0.30,
-  ];
-  static const String completedOrders = '58';
-  static const String cashToRemit = '42.000';
-
-  static const List<(String id, String place, String time, String status, String amount)>
-  history = [
-    ('AQ-1039', 'تلاع العلي · 8:05 ص', '', 'مسلّم', '1.250'),
-    ('AQ-1036', 'الرابية · 7:42 ص', '', 'مسلّم', '1.500'),
-    ('AQ-1030', 'صويلح · 7:15 ص', '', 'ملغي', '0.000'),
   ];
 
   /// عدد الإشعارات غير المقروءة — يغذّي الشارة على أيقونة التطبيق.
@@ -246,6 +388,22 @@ class DriverState extends ChangeNotifier {
     online = !online;
     _syncBroadcast();
     notifyListeners();
+    // **الخادم يعرف بالوردية.** كان التبديل محلياً وحده: سائقٌ «غير متصل»
+    // في شاشته يبقى `AVAILABLE` على الخادم فتصله العروض، وسائقٌ فتح ورديته
+    // لا تصله لأن حالته لم تتغيّر هناك.
+    unawaited(_pushStatus());
+  }
+
+  Future<void> _pushStatus() async {
+    if (!api.isAuthenticated) return;
+    try {
+      await api.patch('/driver/status', {
+        'status': online ? 'AVAILABLE' : 'OFFLINE',
+      });
+      if (online) await loadDriverData();
+    } catch (e) {
+      debugPrint('[driver] تعذّر تحديث حالة الوردية: $e');
+    }
   }
 
   /// يبدأ البثّ مع الوردية ويوقفه معها.
@@ -260,22 +418,17 @@ class DriverState extends ChangeNotifier {
     }
   }
 
-  /// قبول العرض الظاهر في شاشة الوردية: ينتقل لتفاصيل الطلب مباشرة —
-  /// لا حالة "عرض معلَّق" وسيطة في هذا العرض التصميمي.
+  /// بدء التوصيل: ينقل حالة الطلب على الخادم ثم يفتح شاشة التوصيل.
   ///
-  /// وتُسكت النغمة المتكررة أولاً: العرض لم يعد بانتظار ردّ، فبقاؤها
-  /// يرنّ بعد القبول (§9.2).
-  void acceptOffer() {
-    unawaited(OfferAlert.instance.stop());
-    setScreen(DriverScreen.detail);
-  }
-
-  /// بدء التوصيل من شاشة تفاصيل الطلب: ينتقل لشاشة التوصيل الجاري
-  /// ويصفّر عدّاد المراحل إلى 1.
-  void startDelivery() {
-    screen = DriverScreen.run;
-    step = 1;
-    notifyListeners();
+  /// كان ينقل الشاشة ويصفّر عدّاداً محلياً بلا أن يعرف الخادم شيئاً — فيبقى
+  /// الطلب `DRIVER_ASSIGNED` بينما السائق يظنّ أنه بدأ، والزبون يرى مرحلةً
+  /// لم تتقدّم.
+  Future<void> startDelivery() async {
+    await advanceOrder();
+    if (currentOrder != null) {
+      screen = DriverScreen.run;
+      notifyListeners();
+    }
   }
 
   void decEmpties() {
@@ -285,17 +438,6 @@ class DriverState extends ChangeNotifier {
 
   void incEmpties() {
     empties = (empties + 1).clamp(0, 12);
-    notifyListeners();
-  }
-
-  /// زرّ الـCTA بشاشة التوصيل الجاري: يتقدّم للمرحلة التالية، وعند آخر
-  /// مرحلة (3) ينهي الطلب وينتقل لشاشة الأرباح.
-  void advanceOrFinish() {
-    if (step < 3) {
-      step = (step + 1).clamp(0, 3);
-    } else {
-      screen = DriverScreen.earn;
-    }
     notifyListeners();
   }
 

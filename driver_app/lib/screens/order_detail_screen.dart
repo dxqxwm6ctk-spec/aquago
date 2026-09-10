@@ -17,7 +17,47 @@ class OrderDetailScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     final state = context.watch<DriverState>();
     final colors = context.colors;
-
+    final order = state.currentOrder;
+    if (order == null) {
+      // لا طلب مفتوح ⇐ رسالةٌ لا شاشةٌ بيضاء: الطلب قد يكون سُلّم للتوّ أو
+      // ألغاه الزبون، والسائق يحتاج أن يعرف لا أن يحدس.
+      return Scaffold(
+        body: SafeArea(
+          child: Center(
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.inbox_outlined, size: 40, color: colors.ink4),
+                  const SizedBox(height: 12),
+                  Text(
+                    'لا طلب مفتوح الآن',
+                    style: AquaText.arabic(size: 14, weight: FontWeight.w700, color: colors.ink),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    'ستصلك العروض ما دامت ورديتك مفتوحة.',
+                    textAlign: TextAlign.center,
+                    style: AquaText.arabic(size: 12.5, color: colors.ink3),
+                  ),
+                  const SizedBox(height: 16),
+                  GestureDetector(
+                    onTap: () => state.setScreen(DriverScreen.shift),
+                    behavior: HitTestBehavior.opaque,
+                    child: Text(
+                      'العودة إلى الوردية',
+                      style: AquaText.arabic(size: 13, weight: FontWeight.w700, color: colors.deep),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+        bottomNavigationBar: const DriverBottomNav(),
+      );
+    }
     return Scaffold(
       body: SafeArea(
         child: Column(
@@ -35,7 +75,7 @@ class OrderDetailScreen extends StatelessWidget {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text('تفاصيل الطلب', style: AquaText.arabic(size: 17, weight: FontWeight.w700, color: colors.ink)),
-                        Text('${DriverState.orderId} · 8:02 ص', style: AquaText.numeric(size: 11.5, color: colors.ink3)),
+                        Text(order.code, style: AquaText.numeric(size: 11.5, color: colors.ink3)),
                       ],
                     ),
                   ),
@@ -60,7 +100,12 @@ class OrderDetailScreen extends StatelessWidget {
                 ),
               ),
             ),
-            DriverCtaBar(label: 'بدء التوصيل', onTap: state.startDelivery),
+            // نصّ الزرّ من حالة الطلب: «حمّلت القوارير» ثم «انطلقت للزبون»
+            // ثم «تم التسليم». زرٌّ ثابت النصّ كان يَعِد ببدءٍ وقد بدأ فعلاً.
+            DriverCtaBar(
+              label: order.nextActionLabel ?? 'بدء التوصيل',
+              onTap: state.busy ? null : state.startDelivery,
+            ),
           ],
         ),
       ),
@@ -78,6 +123,8 @@ class _RouteMap extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final order = context.watch<DriverState>().currentOrder;
+    if (order == null) return const SizedBox.shrink();
     return AquaMap(
       height: 150,
       center: const LatLng(32.0100, 35.8405),
@@ -87,7 +134,7 @@ class _RouteMap extends StatelessWidget {
         AquaMapMarker(point: AmmanCoords.sweileh, icon: Icons.local_shipping_rounded, color: colors.aqua),
         AquaMapMarker(point: AmmanCoords.khalda, icon: Icons.person_pin_circle_rounded, color: colors.deep),
       ],
-      overlay: const MapBadge(label: DriverState.etaText, showDot: false),
+      overlay: MapBadge(label: order.addressText, showDot: false),
     );
   }
 }
@@ -98,6 +145,8 @@ class _CustomerCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final order = context.watch<DriverState>().currentOrder;
+    if (order == null) return const SizedBox.shrink();
     return AquaCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -118,7 +167,7 @@ class _CustomerCard extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(DriverState.customerName, style: AquaText.arabic(size: 14, weight: FontWeight.w700, color: colors.ink)),
+                    Text(order.customerName ?? 'زبون AquaGo', style: AquaText.arabic(size: 14, weight: FontWeight.w700, color: colors.ink)),
                     Text('خلدا · بناية 24، طابق 3', style: AquaText.arabic(size: 12, color: colors.ink3)),
                   ],
                 ),
@@ -133,7 +182,7 @@ class _CustomerCard extends StatelessWidget {
             padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(color: colors.bg2, borderRadius: BorderRadius.circular(AquaRadii.sm)),
             child: Text(
-              'ملاحظة العميل: «${DriverState.customerNote}»',
+              'ملاحظة العميل: «${order.notes ?? 'لا ملاحظات'}»',
               style: AquaText.arabic(size: 12.5, color: colors.ink2, height: 1.6),
             ),
           ),
@@ -169,6 +218,8 @@ class _OrderContentsCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final order = context.watch<DriverState>().currentOrder;
+    if (order == null) return const SizedBox.shrink();
     Widget line(String label, String value) => Padding(
           padding: const EdgeInsets.symmetric(vertical: 5),
           child: Row(
@@ -186,7 +237,7 @@ class _OrderContentsCard extends StatelessWidget {
         children: [
           Text('محتوى الطلب', style: AquaText.arabic(size: 13, weight: FontWeight.w700, color: colors.ink)),
           const SizedBox(height: 6),
-          line(DriverState.orderItems, '5.000'),
+          line(order.itemsLabel, order.total?.toStringAsFixed(3) ?? '—'),
           line('رسوم التوصيل', '0.250'),
           Padding(
             padding: const EdgeInsets.symmetric(vertical: 10),
@@ -198,7 +249,7 @@ class _OrderContentsCard extends StatelessWidget {
               Text('تحصيل نقدي', style: AquaText.arabic(size: 14, weight: FontWeight.w700, color: colors.ink)),
               Row(
                 children: [
-                  Text(DriverState.cashToCollect, style: AquaText.numeric(size: 18, weight: FontWeight.w700, color: colors.deep)),
+                  Text(order.total?.toStringAsFixed(3) ?? '—', style: AquaText.numeric(size: 18, weight: FontWeight.w700, color: colors.deep)),
                   const SizedBox(width: 4),
                   Text('JOD', style: AquaText.numeric(size: 12, weight: FontWeight.w500, color: colors.ink3)),
                 ],

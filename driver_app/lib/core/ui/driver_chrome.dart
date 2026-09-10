@@ -19,7 +19,7 @@ const _navItems = [
   _NavItem(DriverScreen.shift, 'الوردية', Icons.home_rounded),
   _NavItem(DriverScreen.detail, 'الطلبات', Icons.assignment_outlined),
   _NavItem(DriverScreen.run, 'التوصيل', Icons.location_on_outlined),
-  _NavItem(DriverScreen.earn, 'الأرباح', Icons.payments_outlined),
+  _NavItem(DriverScreen.earn, 'سجلّي', Icons.receipt_long_outlined),
 ];
 
 /// الشريط السفلي الثابت — 4 تبويبات، يتلوّن التبويب النشط بلون العلامة
@@ -76,7 +76,12 @@ class DriverCtaBar extends StatelessWidget {
   const DriverCtaBar({required this.label, required this.onTap, super.key});
 
   final String label;
-  final VoidCallback onTap;
+
+  /// `null` يُعطّل الزرّ — أثناء إرسال الطلب إلى الخادم مثلاً.
+  ///
+  /// زرٌّ يستجيب بلا أثر يدفع السائق إلى الضغط مراراً وهو يظنّ أن شيئاً لم
+  /// يحدث، وكلُّ ضغطةٍ نداءٌ آخر إلى الخادم.
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
@@ -94,7 +99,9 @@ class DriverCtaBar extends StatelessWidget {
             children: [
               Text('تحصيل', style: AquaText.arabic(size: 11.5, color: colors.ink3)),
               Text(
-                DriverState.cashToCollect,
+                // المبلغ من الطلب الفعلي: كان «5.250» ثابتاً مهما كان الطلب،
+                // وهو رقمٌ يقبض به السائق من الزبون.
+                context.watch<DriverState>().currentOrder?.total?.toStringAsFixed(3) ?? '—',
                 style: AquaText.numeric(size: 15, weight: FontWeight.w700, color: colors.ink),
               ),
             ],

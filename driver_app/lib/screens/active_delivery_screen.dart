@@ -17,7 +17,47 @@ class ActiveDeliveryScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     final state = context.watch<DriverState>();
     final colors = context.colors;
-
+    final order = state.currentOrder;
+    if (order == null) {
+      // لا طلب مفتوح ⇐ رسالةٌ لا شاشةٌ بيضاء: الطلب قد يكون سُلّم للتوّ أو
+      // ألغاه الزبون، والسائق يحتاج أن يعرف لا أن يحدس.
+      return Scaffold(
+        body: SafeArea(
+          child: Center(
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.inbox_outlined, size: 40, color: colors.ink4),
+                  const SizedBox(height: 12),
+                  Text(
+                    'لا طلب مفتوح الآن',
+                    style: AquaText.arabic(size: 14, weight: FontWeight.w700, color: colors.ink),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    'ستصلك العروض ما دامت ورديتك مفتوحة.',
+                    textAlign: TextAlign.center,
+                    style: AquaText.arabic(size: 12.5, color: colors.ink3),
+                  ),
+                  const SizedBox(height: 16),
+                  GestureDetector(
+                    onTap: () => state.setScreen(DriverScreen.shift),
+                    behavior: HitTestBehavior.opaque,
+                    child: Text(
+                      'العودة إلى الوردية',
+                      style: AquaText.arabic(size: 13, weight: FontWeight.w700, color: colors.deep),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+        bottomNavigationBar: const DriverBottomNav(),
+      );
+    }
     return Scaffold(
       body: SafeArea(
         child: Column(
@@ -35,7 +75,7 @@ class ActiveDeliveryScreen extends StatelessWidget {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text('التسليم الجاري', style: AquaText.arabic(size: 17, weight: FontWeight.w700, color: colors.ink)),
-                        Text('${DriverState.orderId} · خلدا', style: AquaText.numeric(size: 11.5, color: colors.ink3)),
+                        Text(order.code, style: AquaText.numeric(size: 11.5, color: colors.ink3)),
                       ],
                     ),
                   ),
@@ -59,7 +99,7 @@ class ActiveDeliveryScreen extends StatelessWidget {
             ),
             DriverCtaBar(
               label: state.isLastStep ? 'إنهاء الطلب' : 'الخطوة التالية',
-              onTap: state.advanceOrFinish,
+              onTap: state.busy ? null : state.advanceOrder,
             ),
           ],
         ),
@@ -147,7 +187,17 @@ class _StepsTimeline extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          for (var i = 0; i < stages.length; i++) _StageRow(index: i, stage: stages[i], step: state.step, isLast: i == stages.length - 1, colors: colors),
+          for (var i = 0; i < stages.length; i++)
+            // المرحلة من حالة الطلب على الخادم لا من عدّادٍ محلي: كان
+            // التقدّم بضغطةٍ في التطبيق وحده، فيرى السائق «تم التسليم»
+            // وحالةُ الطلب لم تتغيّر، والزبون ينتظر شاحنةً وصلت.
+            _StageRow(
+              index: i,
+              stage: stages[i],
+              step: state.currentOrder?.stageIndex ?? 0,
+              isLast: i == stages.length - 1,
+              colors: colors,
+            ),
         ],
       ),
     );

@@ -1,6 +1,7 @@
 // اختبار دخان بسيط لتطبيق السائق: يتحقق أن التطبيق يُبنى على شاشة
 // الوردية، وأن التنقّل عبر الشريط السفلي بين الشاشات الأربع يعمل.
 
+import 'package:driver_app/state/driver_state.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -16,25 +17,34 @@ void main() {
     expect(find.text('الوردية'), findsWidgets);
   });
 
-  testWidgets('التنقّل إلى شاشة الأرباح عبر الشريط السفلي', (
+  testWidgets('التنقّل إلى سجلّ التوصيلات عبر الشريط السفلي', (
     WidgetTester tester,
   ) async {
-    await pumpSignedInApp(tester);
+    final state = await pumpSignedInApp(tester);
+    state.setDataForTest(driverStats: testDriverStats);
+    await tester.pump();
 
-    await tester.tap(find.text('الأرباح'));
+    // كانت «الأرباح» بأرقامٍ مخترعة لا مصدر لها على الخادم — أجرُ السائق
+    // تحاسبه وكالته لا المنصة.
+    await tester.tap(find.text('سجلّي'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 300));
 
-    expect(find.text('أرباح هذا الأسبوع'), findsOneWidget);
+    expect(find.text('سجلّ التوصيلات'), findsOneWidget);
+    expect(find.text('توصيلاتك حتى الآن'), findsOneWidget);
+    expect(find.text('58'), findsOneWidget);
+    expect(find.text('أرباح هذا الأسبوع'), findsNothing);
   });
 
   testWidgets('شاشتا تفاصيل الطلب والتوصيل تعرضان خريطة حقيقية', (
     WidgetTester tester,
   ) async {
-    await pumpSignedInApp(tester);
+    final state = await pumpSignedInApp(tester);
 
-    // قبول الطلب ينقل إلى تفاصيل الطلب — وفيها خريطة المسار.
-    await tester.tap(find.text('قبول الطلب'));
+    // الطلب يُحقن لا يُقبل بضغطة: القبول صار نداءً إلى الخادم
+    // (`/driver/offers/:id/accept`)، وما يقيسه هذا الاختبار هو الخريطة.
+    state.setDataForTest(order: testDriverOrder());
+    state.setScreen(DriverScreen.detail);
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 300));
 
@@ -42,8 +52,8 @@ void main() {
     expect(find.byType(FlutterMap), findsOneWidget);
     expect(find.text('route map view'), findsNothing);
 
-    // "بدء التوصيل" ينقل إلى شاشة الملاحة — وفيها خريطة ثانية.
-    await tester.tap(find.text('بدء التوصيل'));
+    // شاشة الملاحة — وفيها خريطة ثانية.
+    state.setScreen(DriverScreen.run);
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 300));
 

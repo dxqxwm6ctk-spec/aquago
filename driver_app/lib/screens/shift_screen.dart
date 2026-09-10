@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../core/theme/aqua_theme.dart';
@@ -29,7 +31,7 @@ class ShiftScreen extends StatelessWidget {
               _ShiftToggleCard(),
               const SizedBox(height: 18),
               const _TodayStatsRow(),
-              if (state.online) ...[
+              if (state.online && state.offer != null) ...[
                 const SizedBox(height: 18),
                 const _NewOrderAlert(),
               ],
@@ -199,26 +201,40 @@ class _TodayStatsRow extends StatelessWidget {
           ),
         );
 
+    final stats = context.watch<DriverState>().stats;
+
+    // **«أرباح اليوم» حُذفت لا نُقلت.** الخادم لا يحمل رقماً لأجر السائق —
+    // تحاسبه وكالته لا المنصة (`/driver/stats` تردّ توصيلات وتقييماً فقط).
+    // كان يُعرض «18.750» مخترعاً، وأخطر ما في تطبيقٍ أن يَعِد سائقاً بمبلغ
+    // لا مصدر له. إجمالي التوصيلات مكانها: رقمٌ حقيقي ويعني شيئاً له.
     return Row(
       children: [
-        stat('طلبات اليوم', DriverState.ordersToday),
+        stat('توصيلات اليوم', '${stats?.completedToday ?? 0}'),
         const SizedBox(width: 10),
-        stat('أرباح اليوم', DriverState.earningsToday),
+        stat('إجمالي التوصيلات', '${stats?.completedTotal ?? 0}'),
         const SizedBox(width: 10),
-        stat('التقييم', DriverState.rating),
+        stat('التقييم', stats?.ratingLabel ?? '—'),
       ],
     );
   }
 }
 
+/// بطاقة العرض المعلّق — تظهر حين يصل عرضٌ فعلي وحدها.
+///
+/// كانت تُعرض دائماً ما دامت الوردية مفتوحة، ببيانات ثابتة: طلبٌ لا وجود له،
+/// وضغطةُ «قبول» تنقل الشاشة ولا تُخبر الخادم بشيء.
 class _NewOrderAlert extends StatelessWidget {
   const _NewOrderAlert();
 
   @override
   Widget build(BuildContext context) {
-    final state = context.read<DriverState>();
+    final state = context.watch<DriverState>();
+    final offer = state.offer;
     final colors = context.colors;
 
+    if (offer == null) return const SizedBox.shrink();
+
+    final order = offer.order;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -236,9 +252,10 @@ class _NewOrderAlert extends StatelessWidget {
             children: [
               Row(
                 children: [
-                  Text(DriverState.orderId, style: AquaText.numeric(size: 13, weight: FontWeight.w600, color: colors.ink3)),
+                  Text(order.code, style: AquaText.numeric(size: 13, weight: FontWeight.w600, color: colors.ink3)),
                   const Spacer(),
-                  StatusPill(label: DriverState.orderDistance, background: colors.infoBg, foreground: colors.infoFg),
+                  if (offer.zone != null)
+                    StatusPill(label: offer.zone!, background: colors.infoBg, foreground: colors.infoFg),
                 ],
               ),
               const SizedBox(height: 12),
@@ -255,59 +272,153 @@ class _NewOrderAlert extends StatelessWidget {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(DriverState.orderItems, style: AquaText.arabic(size: 13.5, weight: FontWeight.w600, color: colors.ink)),
-                        Text(DriverState.orderAddress, style: AquaText.arabic(size: 12, color: colors.ink3)),
+                        Text(order.itemsLabel, style: AquaText.arabic(size: 13.5, weight: FontWeight.w600, color: colors.ink)),
+                        Text(order.addressText, style: AquaText.arabic(size: 12, color: colors.ink3)),
                       ],
                     ),
                   ),
                 ],
               ),
-              const SizedBox(height: 10),
-              Text(
-                'نقدًا عند التسليم · ${DriverState.cashToCollect} د.أ',
-                style: AquaText.arabic(size: 12.5, weight: FontWeight.w700, color: colors.teal),
-              ),
-              const SizedBox(height: 10),
-              ClipRRect(
-                borderRadius: BorderRadius.circular(99),
-                child: LayoutBuilder(
-                  builder: (context, constraints) => Stack(
-                    children: [
-                      Container(height: 6, color: colors.bg),
-                      Container(
-                        height: 6,
-                        width: constraints.maxWidth * 0.42,
-                        decoration: BoxDecoration(gradient: AquaColors.buttonGradient),
-                      ),
-                    ],
-                  ),
+              if (order.total != null) ...[
+                const SizedBox(height: 10),
+                Text(
+                  'نقدًا عند التسليم · ${order.total!.toStringAsFixed(3)} د.أ',
+                  style: AquaText.arabic(size: 12.5, weight: FontWeight.w700, color: colors.teal),
                 ),
-              ),
+              ],
+              const SizedBox(height: 10),
+              _OfferCountdown(seconds: offer.remainingSeconds, colors: colors),
+              if (state.actionError != null) ...[
+                const SizedBox(height: 8),
+                Text(
+                  state.actionError!,
+                  style: AquaText.arabic(size: 12, color: colors.dangerFg),
+                ),
+              ],
               const SizedBox(height: 12),
               Row(
                 children: [
                   Expanded(
                     child: GestureDetector(
-                      onTap: state.acceptOffer,
+                      onTap: state.busy ? null : state.acceptOffer,
+                      behavior: HitTestBehavior.opaque,
                       child: Container(
                         height: 44,
                         alignment: Alignment.center,
                         decoration: BoxDecoration(gradient: AquaColors.buttonGradient, borderRadius: BorderRadius.circular(AquaRadii.button)),
-                        child: Text('قبول الطلب', style: AquaText.arabic(size: 14, weight: FontWeight.w700, color: Colors.white)),
+                        child: state.busy
+                            ? const SizedBox(
+                                width: 18,
+                                height: 18,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  valueColor: AlwaysStoppedAnimation(Colors.white),
+                                ),
+                              )
+                            : Text('قبول الطلب', style: AquaText.arabic(size: 14, weight: FontWeight.w700, color: Colors.white)),
                       ),
                     ),
                   ),
                   const SizedBox(width: 10),
-                  Container(
-                    width: 44,
-                    height: 44,
-                    decoration: BoxDecoration(border: Border.all(color: colors.line2), borderRadius: BorderRadius.circular(AquaRadii.button)),
-                    child: Icon(Icons.close_rounded, color: colors.ink3),
+                  // زرّ الرفض كان أيقونةً لا تفعل شيئاً: يبقى العرض معروضاً
+                  // ويمضي مؤقّته، ولا يعرف الخادم أن السائق لا يريده فيؤخّر
+                  // عرضه على غيره.
+                  GestureDetector(
+                    onTap: state.busy ? null : state.rejectOffer,
+                    behavior: HitTestBehavior.opaque,
+                    child: Container(
+                      width: 44,
+                      height: 44,
+                      decoration: BoxDecoration(border: Border.all(color: colors.line2), borderRadius: BorderRadius.circular(AquaRadii.button)),
+                      child: Icon(Icons.close_rounded, color: colors.ink3),
+                    ),
                   ),
                 ],
               ),
             ],
           ),
+        ),
+      ],
+    );
+  }
+}
+
+/// شريط المؤقّت التنازلي للعرض.
+///
+/// الثواني من الخادم لا من `expiresAt`: ساعةُ الجهاز قد تكون مضبوطة خطأً،
+/// فمؤقّتٌ مبنيّ على وقتها ينتهي مبكّراً أو يتأخّر بفارق ساعة كاملة.
+class _OfferCountdown extends StatefulWidget {
+  const _OfferCountdown({required this.seconds, required this.colors});
+
+  final int seconds;
+  final AquaColors colors;
+
+  @override
+  State<_OfferCountdown> createState() => _OfferCountdownState();
+}
+
+class _OfferCountdownState extends State<_OfferCountdown> {
+  late int _left = widget.seconds;
+  Timer? _timer;
+
+  @override
+  void initState() {
+    super.initState();
+    _start();
+  }
+
+  @override
+  void didUpdateWidget(_OfferCountdown old) {
+    super.didUpdateWidget(old);
+    // عرضٌ جديد ⇐ مؤقّت جديد: بلا هذا كان الشريط يكمل عدّ العرض السابق.
+    if (old.seconds != widget.seconds) {
+      _left = widget.seconds;
+      _start();
+    }
+  }
+
+  void _start() {
+    _timer?.cancel();
+    if (_left <= 0) return;
+    _timer = Timer.periodic(const Duration(seconds: 1), (t) {
+      if (!mounted) return;
+      setState(() => _left = _left > 0 ? _left - 1 : 0);
+      if (_left <= 0) t.cancel();
+    });
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final total = widget.seconds == 0 ? 1 : widget.seconds;
+    final colors = widget.colors;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        ClipRRect(
+          borderRadius: BorderRadius.circular(99),
+          child: LayoutBuilder(
+            builder: (context, constraints) => Stack(
+              children: [
+                Container(height: 6, color: colors.bg),
+                Container(
+                  height: 6,
+                  width: constraints.maxWidth * (_left / total).clamp(0.0, 1.0),
+                  decoration: BoxDecoration(gradient: AquaColors.buttonGradient),
+                ),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: 6),
+        Text(
+          _left > 0 ? 'يتبقّى $_left ثانية للردّ' : 'انتهت مهلة العرض',
+          style: AquaText.arabic(size: 11.5, color: _left > 0 ? colors.ink3 : colors.dangerFg),
         ),
       ],
     );
