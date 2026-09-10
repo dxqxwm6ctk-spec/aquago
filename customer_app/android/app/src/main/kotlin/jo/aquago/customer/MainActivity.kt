@@ -1,4 +1,4 @@
-package jo.aquago.customer_app
+package jo.aquago.customer
 
 import io.flutter.embedding.android.FlutterActivity
 

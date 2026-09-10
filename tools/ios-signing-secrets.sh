@@ -23,8 +23,8 @@ SIGN_DIR="$ROOT/ios_signing"
 OUT_DIR="$SIGN_DIR/base64"
 
 # معرّفا الحزمة كما في project.pbxproj لكل تطبيق.
-BUNDLE_CUSTOMER="jo.aquago.customerApp"
-BUNDLE_DRIVER="jo.aquago.driverApp"
+BUNDLE_CUSTOMER="jo.aquago.customer"
+BUNDLE_DRIVER="jo.aquago.driver"
 
 FAILED=0
 declare -a SECRET_ROWS=()

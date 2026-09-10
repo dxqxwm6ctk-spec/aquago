@@ -24,6 +24,11 @@
 	<string>????</string>
 	<key>CFBundleVersion</key>
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
+	<!-- بثّ موقع السائق أثناء الوردية. WhenInUse لا Always: البثّ يعمل
+	     والتطبيق مفتوح أمام السائق، وAlways تستدعي مراجعةً أصعب في
+	     المتجر لصلاحيةٍ لا تُستعمل. -->
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>يُستخدم موقعك أثناء الوردية ليتابع الزبون وصول طلبه على الخريطة.</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>UIApplicationSceneManifest</key>
@@ -49,6 +54,12 @@
 	</dict>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
+	<key>UIBackgroundModes</key>
+	<array>
+		<!-- يسمح للنظام بإيقاظ التطبيق عند وصول إشعار وهو بالخلفية أو
+		     مغلق — وبدونه لا يعمل معالج الخلفية إطلاقاً. -->
+		<string>remote-notification</string>
+	</array>
 	<key>UILaunchStoryboardName</key>
 	<string>LaunchScreen</string>
 	<key>UIMainStoryboardFile</key>
@@ -65,6 +76,21 @@
 		<string>UIInterfaceOrientationPortraitUpsideDown</string>
 		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
+	</array>
+	<!-- مخطط العودة من دخول جوجل: المتصفح يفتح صفحة جوجل ثم يعيد النتيجة
+	     إلى التطبيق عبر هذا المخطط. بدونه يكتمل الدخول في المتصفح ولا يعود
+	     إلى التطبيق أبداً. القيمة هي REVERSED_CLIENT_ID من
+	     GoogleService-Info.plist حرفياً — أي تعديل فيها يكسر العودة. -->
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>com.googleusercontent.apps.276428851477-3amnar0104rg9n0vmoltkjee3fgtaesa</string>
+			</array>
+		</dict>
 	</array>
 </dict>
 </plist>

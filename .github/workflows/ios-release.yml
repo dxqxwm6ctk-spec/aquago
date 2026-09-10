@@ -103,7 +103,7 @@ jobs:
           [ -n "$IOS_TEAM_ID" ]         || MISSING+=("IOS_TEAM_ID")
 
           # بروفايل لكل تطبيق: معرّفا الحزمة مختلفان
-          # (jo.aquago.customerApp و jo.aquago.driverApp) وكل بروفايل مربوط
+          # (jo.aquago.customer و jo.aquago.driver) وكل بروفايل مربوط
           # بمعرّف حزمة واحد، فبروفايل واحد لا يغطّي الاثنين مهما حاولت.
           if [ "$APP" = "customer_app" ]; then
             [ -n "$PROFILE_CUSTOMER" ] || MISSING+=("IOS_PROFILE_CUSTOMER_BASE64")
@@ -329,7 +329,7 @@ jobs:
 
           # مطابقة معرّف الحزمة بالتطبيق المبني: خلط بروفايلي التطبيقين وارد
           # جدًّا (الاسمان متشابهان)، والخطأ يظهر متأخرًا كرسالة توقيع مبهمة.
-          EXPECTED="$([ "${{ matrix.app }}" = "customer_app" ] && echo "jo.aquago.customerApp" || echo "jo.aquago.driverApp")"
+          EXPECTED="$([ "${{ matrix.app }}" = "customer_app" ] && echo "jo.aquago.customer" || echo "jo.aquago.driver")"
           if [ "$BUNDLE" != "$EXPECTED" ]; then
             echo "::error::البروفايل لمعرّف حزمة $BUNDLE بينما البناء لـ$EXPECTED."
             echo "على الأرجح تبادلت قيمتا IOS_PROFILE_CUSTOMER_BASE64 و IOS_PROFILE_DRIVER_BASE64."

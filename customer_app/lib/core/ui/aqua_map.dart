@@ -34,7 +34,7 @@ class AmmanCoords {
 /// استخدامها تمنع الإنتاج التجاري بلا اتفاق. قبل النشر يُستبدل
 /// `_tileUrl` بمزوّد متعاقَد عليه (MapTiler/Stadia أو خادم بلاطات
 /// ذاتي) — القرار يبقى مؤجَّلًا لا منسيًّا.
-class AquaMap extends StatelessWidget {
+class AquaMap extends StatefulWidget {
   const AquaMap({
     required this.height,
     this.center = AmmanCoords.center,
@@ -42,6 +42,8 @@ class AquaMap extends StatelessWidget {
     this.markers = const [],
     this.route = const [],
     this.overlay,
+    this.followPoints = false,
+    this.onTap,
     super.key,
   });
 
@@ -55,6 +57,58 @@ class AquaMap extends StatelessWidget {
 
   /// عنصر يُركَّب فوق الخريطة (شارة المسافة، تعليمات الاتجاه...).
   final Widget? overlay;
+
+  /// تُعيد ضبط الإطار كلما تغيّرت النقاط — للتتبّع الحيّ.
+  ///
+  /// `initialCameraFit` يُحسب مرة واحدة عند البناء كما يقول اسمه: مع سائقٍ
+  /// يتحرّك كانت علامته تخرج من الإطار بعد دقائق فيرى الزبون خريطة بلا
+  /// سائق. تبقى `false` للخرائط الساكنة فلا تُقاوم سحب المستخدم بلا سبب.
+  final bool followPoints;
+
+  /// ضغطةٌ على الخريطة تُعيد إحداثياتها — لاختيار موقع عنوان.
+  ///
+  /// بدونها كانت الخريطة عرضاً لا يُحدَّد عليه شيء، ولا سبيل لزبونٍ أن يقول
+  /// أين بيته إلا بنصٍّ لا يقود سائقاً.
+  final void Function(LatLng point)? onTap;
+
+  @override
+  State<AquaMap> createState() => _AquaMapState();
+}
+
+class _AquaMapState extends State<AquaMap> {
+  final _controller = MapController();
+
+  /// آخر إطار طُبِّق — يمنع إعادة الضبط مع كل إعادة بناء لا تغيّر النقاط،
+  /// وهي كثيرة (كل `notifyListeners` في الحالة).
+  String? _lastFit;
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  /// مفتاحٌ يمثّل النقاط الحالية — تغيّره وحده يستدعي إعادة الإطار.
+  String get _fitKey =>
+      _fitPoints.map((p) => '${p.latitude.toStringAsFixed(4)},${p.longitude.toStringAsFixed(4)}').join(';');
+
+  void _fitIfNeeded() {
+    if (!widget.followPoints || _fitPoints.length < 2) return;
+    final key = _fitKey;
+    if (key == _lastFit) return;
+    _lastFit = key;
+    // بعد الإطار لا أثناءه: الضبط داخل `build` يرمي لأن الخريطة لم تُقَس بعد.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _controller.fitCamera(
+        CameraFit.coordinates(
+          coordinates: _fitPoints,
+          padding: const EdgeInsets.all(36),
+          maxZoom: 15,
+        ),
+      );
+    });
+  }
 
   static const _tileUrl = 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
   static const _userAgent = 'jo.aquago.customer_app';
@@ -72,13 +126,15 @@ class AquaMap extends StatelessWidget {
       Platform.environment.containsKey('FLUTTER_TEST');
 
   /// النقاط التي يجب أن يسعها الإطار: المسار وكل العلامات.
-  List<LatLng> get _fitPoints => [...route, ...markers.map((m) => m.point)];
+  List<LatLng> get _fitPoints =>
+      [...widget.route, ...widget.markers.map((m) => m.point)];
 
   @override
   Widget build(BuildContext context) {
     final colors = context.colors;
+    _fitIfNeeded();
     return SizedBox(
-      height: height,
+      height: widget.height,
       child: ClipRRect(
         borderRadius: BorderRadius.circular(AquaRadii.card),
         child: Stack(
@@ -89,9 +145,10 @@ class AquaMap extends StatelessWidget {
             // مقروءَين — فالمستخدم يرى موقعه لا خطأً.
             Positioned.fill(child: ColoredBox(color: colors.sky100)),
             FlutterMap(
+              mapController: _controller,
               options: MapOptions(
-                initialCenter: center,
-                initialZoom: zoom,
+                initialCenter: widget.center,
+                initialZoom: widget.zoom,
                 // حين تُعطى نقاطٌ (مسار أو علامات) يُحسب الإطار منها بدل
                 // مركزٍ وتقريبٍ ثابتَين: البطاقة هنا 172px ارتفاعًا، وعند
                 // تقريبٍ محسوبٍ باليد كان طرفا المسار — السائق والبيت —
@@ -110,20 +167,23 @@ class AquaMap extends StatelessWidget {
                 interactionOptions: const InteractionOptions(
                   flags: InteractiveFlag.pinchZoom | InteractiveFlag.drag,
                 ),
+                onTap: widget.onTap == null
+                    ? null
+                    : (_, point) => widget.onTap!(point),
               ),
               children: [
                 if (!_inWidgetTest)
                   TileLayer(urlTemplate: _tileUrl, userAgentPackageName: _userAgent),
-                if (route.length > 1)
+                if (widget.route.length > 1)
                   PolylineLayer(
                     polylines: [
-                      Polyline(points: route, strokeWidth: 4, color: colors.deep),
+                      Polyline(points: widget.route, strokeWidth: 4, color: colors.deep),
                     ],
                   ),
-                if (markers.isNotEmpty)
+                if (widget.markers.isNotEmpty)
                   MarkerLayer(
                     markers: [
-                      for (final m in markers)
+                      for (final m in widget.markers)
                         Marker(
                           point: m.point,
                           width: 40,
@@ -134,7 +194,7 @@ class AquaMap extends StatelessWidget {
                   ),
               ],
             ),
-            ?overlay,
+            ?widget.overlay,
           ],
         ),
       ),

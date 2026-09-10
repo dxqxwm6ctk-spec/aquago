@@ -4,15 +4,13 @@
 import 'package:flutter_map/flutter_map.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:driver_app/main.dart';
+import 'pump_app.dart';
 
 void main() {
   testWidgets('يُبنى تطبيق السائق على شاشة الوردية افتراضيًا', (
     WidgetTester tester,
   ) async {
-    await tester.pumpWidget(const AquaGoDriverApp());
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 300));
+    await pumpSignedInApp(tester);
 
     expect(find.text('وردية نشطة'), findsOneWidget);
     expect(find.text('الوردية'), findsWidgets);
@@ -21,9 +19,7 @@ void main() {
   testWidgets('التنقّل إلى شاشة الأرباح عبر الشريط السفلي', (
     WidgetTester tester,
   ) async {
-    await tester.pumpWidget(const AquaGoDriverApp());
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 300));
+    await pumpSignedInApp(tester);
 
     await tester.tap(find.text('الأرباح'));
     await tester.pump();
@@ -35,9 +31,7 @@ void main() {
   testWidgets('شاشتا تفاصيل الطلب والتوصيل تعرضان خريطة حقيقية', (
     WidgetTester tester,
   ) async {
-    await tester.pumpWidget(const AquaGoDriverApp());
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 300));
+    await pumpSignedInApp(tester);
 
     // قبول الطلب ينقل إلى تفاصيل الطلب — وفيها خريطة المسار.
     await tester.tap(find.text('قبول الطلب'));

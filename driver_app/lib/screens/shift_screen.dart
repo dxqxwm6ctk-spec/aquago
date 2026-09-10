@@ -4,6 +4,7 @@ import '../core/theme/aqua_theme.dart';
 import '../core/theme/aqua_colors.dart';
 import '../core/theme/aqua_text.dart';
 import '../core/ui/driver_chrome.dart';
+import '../core/location_broadcast.dart';
 import '../state/driver_state.dart';
 
 /// شاشة "الوردية" — لوحة السائق الرئيسية: تشغيل/إيقاف استقبال الطلبات،
@@ -49,6 +50,7 @@ class _DriverHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colors = context.colors;
+    final name = context.watch<DriverState>().driverName;
     return Row(
       children: [
         Container(
@@ -56,14 +58,18 @@ class _DriverHeader extends StatelessWidget {
           height: 44,
           decoration: BoxDecoration(gradient: AquaColors.markGradient, borderRadius: BorderRadius.circular(14)),
           alignment: Alignment.center,
-          child: Text('م', style: AquaText.arabic(size: 16, weight: FontWeight.w700, color: Colors.white)),
+          // أول حرف من اسمه هو لا حرفٌ ثابت — الحساب صار حقيقياً.
+          child: Text(
+            name.characters.isEmpty ? '؟' : name.characters.first,
+            style: AquaText.arabic(size: 16, weight: FontWeight.w700, color: Colors.white),
+          ),
         ),
         const SizedBox(width: 12),
         Expanded(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(DriverState.driverName, style: AquaText.arabic(size: 15, weight: FontWeight.w700, color: colors.ink)),
+              Text(name, style: AquaText.arabic(size: 15, weight: FontWeight.w700, color: colors.ink)),
               Text(DriverState.driverPlate, style: AquaText.numeric(size: 12, weight: FontWeight.w500, color: colors.ink3)),
             ],
           ),
@@ -100,12 +106,26 @@ class _DriverHeader extends StatelessWidget {
 class _ShiftToggleCard extends StatelessWidget {
   const _ShiftToggleCard();
 
+  /// النص تحت «وردية نشطة» — يقول الحقيقة عن الموقع.
+  ///
+  /// كان «تستقبل الطلبات القريبة الآن» ثابتاً: سائقٌ رفض إذن الموقع يقرأه
+  /// ويطمئن، بينما موقعه لا يصل ولا زبونَ يراه على الخريطة.
+  static String _broadcastLabel(BroadcastStatus s) => switch (s) {
+        BroadcastStatus.live => 'تستقبل الطلبات — موقعك يصل للزبائن',
+        BroadcastStatus.starting => 'جارٍ تشغيل التتبّع…',
+        BroadcastStatus.permissionDenied => 'إذن الموقع مرفوض — التتبّع معطّل',
+        BroadcastStatus.permissionDeniedForever =>
+          'فعّل إذن الموقع من إعدادات النظام',
+        BroadcastStatus.locationServiceOff => 'خدمة الموقع مطفأة على جهازك',
+        BroadcastStatus.disconnected => 'انقطع الاتصال — موقعك لا يصل',
+        BroadcastStatus.off => 'تستقبل الطلبات القريبة الآن',
+      };
+
   @override
   Widget build(BuildContext context) {
     final state = context.watch<DriverState>();
     final colors = context.colors;
     final online = state.online;
-
     return GestureDetector(
       onTap: state.toggleOnline,
       child: Container(
@@ -128,7 +148,9 @@ class _ShiftToggleCard extends StatelessWidget {
                   ),
                   const SizedBox(height: 4),
                   Text(
-                    online ? 'تستقبل الطلبات القريبة الآن' : 'اضغط لبدء استلام الطلبات',
+                    online
+                        ? _broadcastLabel(state.location.status)
+                        : 'اضغط لبدء استلام الطلبات',
                     style: AquaText.arabic(size: 12.5, color: online ? colors.sky200 : colors.ink3),
                   ),
                 ],

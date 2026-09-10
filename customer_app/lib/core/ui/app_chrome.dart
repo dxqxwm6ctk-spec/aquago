@@ -83,6 +83,34 @@ class AppCtaBar extends StatelessWidget {
     final label = state.ctaLabel;
     if (label == null) return const SizedBox.shrink();
 
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        // خطأ الطلب فوق الزرّ مباشرةً: رسائل الخادم عربية ومقصودة للزبون
+        // («طلبك السابق ما زال جارياً»، «العنوان خارج التغطية»)، وإخفاؤها
+        // يترك ضغطةً لا أثر لها بلا تفسير.
+        if (state.orderError != null)
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+            color: colors.dangerBg,
+            child: Text(
+              state.orderError!,
+              textAlign: TextAlign.center,
+              style: AquaText.arabic(size: 12, color: colors.dangerFg),
+            ),
+          ),
+        _ctaRow(context, state, colors, label),
+      ],
+    );
+  }
+
+  Widget _ctaRow(
+    BuildContext context,
+    AppState state,
+    AquaColors colors,
+    String label,
+  ) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       decoration: BoxDecoration(
@@ -104,7 +132,10 @@ class AppCtaBar extends StatelessWidget {
           const SizedBox(width: 14),
           Expanded(
             child: GestureDetector(
-              onTap: state.onCtaTap,
+              // الضغط يُعطَّل أثناء الإرسال: `confirmOrder` يحرس نفسه من
+              // النداء المتكرر، لكن زرّاً يستجيب بلا أثر يدفع الزبون إلى
+              // الضغط مراراً وهو يظنّ أن شيئاً لم يحدث.
+              onTap: state.placingOrder ? null : state.onCtaTap,
               child: Container(
                 height: 52,
                 alignment: Alignment.center,
@@ -112,14 +143,23 @@ class AppCtaBar extends StatelessWidget {
                   gradient: AquaColors.buttonGradient,
                   borderRadius: BorderRadius.circular(AquaRadii.button),
                 ),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Text(label, style: AquaText.arabic(size: 14.5, weight: FontWeight.w700, color: Colors.white)),
-                    const SizedBox(width: 8),
-                    const Icon(Icons.chevron_left_rounded, color: Colors.white, size: 20),
-                  ],
-                ),
+                child: state.placingOrder
+                    ? const SizedBox(
+                        width: 20,
+                        height: 20,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          valueColor: AlwaysStoppedAnimation(Colors.white),
+                        ),
+                      )
+                    : Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Text(label, style: AquaText.arabic(size: 14.5, weight: FontWeight.w700, color: Colors.white)),
+                          const SizedBox(width: 8),
+                          const Icon(Icons.chevron_left_rounded, color: Colors.white, size: 20),
+                        ],
+                      ),
               ),
             ),
           ),
@@ -205,6 +245,7 @@ class AquaCard extends StatelessWidget {
     this.padding = const EdgeInsets.all(16),
     this.color,
     this.gradient,
+    this.border,
     super.key,
   });
 
@@ -212,6 +253,13 @@ class AquaCard extends StatelessWidget {
   final EdgeInsets padding;
   final Color? color;
   final Gradient? gradient;
+
+  /// حدٌّ صريح يعلو الافتراضي — للبطاقة المختارة مثلاً.
+  ///
+  /// بدونه كانت البطاقة الملوّنة تفقد حدّها كلياً: الشرط أدناه يُسقط الحدّ
+  /// متى مُرّر `color`، فبطاقةٌ مختارة بخلفية فاتحة كانت تخسر إطارها
+  /// بالضبط حين تحتاجه لتُميَّز.
+  final BoxBorder? border;
 
   @override
   Widget build(BuildContext context) {
@@ -222,7 +270,8 @@ class AquaCard extends StatelessWidget {
         color: gradient == null ? (color ?? colors.surface) : null,
         gradient: gradient,
         borderRadius: BorderRadius.circular(AquaRadii.card),
-        border: (gradient == null && color == null) ? Border.all(color: colors.line) : null,
+        border: border ??
+            ((gradient == null && color == null) ? Border.all(color: colors.line) : null),
       ),
       child: child,
     );

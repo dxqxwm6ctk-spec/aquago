@@ -5,6 +5,7 @@
   "private": true,
   "scripts": {
     "build": "nest build",
+    "check:env": "node scripts/check-env.js",
     "test": "ts-node --project test/tsconfig.json test/run-all.ts",
     "test:docker": "node -e \"process.env.PHASE3_INCLUDE_DOCKER='1'; require('child_process').execSync('npx ts-node --project test/tsconfig.json test/run-all.ts', {stdio:'inherit', env: process.env})\"",
     "start": "nest start",

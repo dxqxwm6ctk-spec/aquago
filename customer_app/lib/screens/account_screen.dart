@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import '../core/theme/aqua_theme.dart';
 import '../core/theme/aqua_colors.dart';
 import '../core/theme/aqua_text.dart';
@@ -35,7 +36,12 @@ class AccountScreen extends StatelessWidget {
               ]),
               const SizedBox(height: 18),
               Center(
-                child: Text('تسجيل الخروج', style: AquaText.arabic(size: 13.5, weight: FontWeight.w600, color: const Color(0xFFDC2626))),
+                child: TextButton(
+                  // يُبلَّغ الخادم ليُلغي الجلسة — مسحُ التوكن محلياً وحده
+                  // يترك جلسة حيّة في شاشة «الأجهزة» لدى الأدمن.
+                  onPressed: () => context.read<AppState>().logout(),
+                  child: Text('تسجيل الخروج', style: AquaText.arabic(size: 13.5, weight: FontWeight.w600, color: const Color(0xFFDC2626))),
+                ),
               ),
               const SizedBox(height: 16),
               Center(
@@ -56,6 +62,9 @@ class _ProfileHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final state = context.watch<AppState>();
+    final name = state.userName;
+    final phone = state.userPhone;
     return Row(
       children: [
         Container(
@@ -63,20 +72,25 @@ class _ProfileHeader extends StatelessWidget {
           height: 56,
           decoration: BoxDecoration(gradient: AquaColors.markGradient, shape: BoxShape.circle),
           alignment: Alignment.center,
-          child: Text('ا', style: AquaText.arabic(size: 20, weight: FontWeight.w700, color: Colors.white)),
+          // أول حرف من اسمه هو لا حرفٌ ثابت — الحساب صار حقيقياً.
+          child: Text(
+            name.characters.isEmpty ? '؟' : name.characters.first,
+            style: AquaText.arabic(size: 20, weight: FontWeight.w700, color: Colors.white),
+          ),
         ),
         const SizedBox(width: 12),
         Expanded(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(AppState.userName, style: AquaText.arabic(size: 17, weight: FontWeight.w700, color: colors.ink)),
+              Text(name, style: AquaText.arabic(size: 17, weight: FontWeight.w700, color: colors.ink)),
               // رقم الهاتف يُعزل بـLTR: مقاطعه تُقلَب داخل سياق RTL
               // فيظهر "6635 9041 7 962+" بدل "+962 7 9041 6635".
-              Directionality(
-                textDirection: TextDirection.ltr,
-                child: Text(AppState.userPhone, style: AquaText.numeric(size: 12, color: colors.ink3)),
-              ),
+              if (phone.isNotEmpty)
+                Directionality(
+                  textDirection: TextDirection.ltr,
+                  child: Text(phone, style: AquaText.numeric(size: 12, color: colors.ink3)),
+                ),
             ],
           ),
         ),

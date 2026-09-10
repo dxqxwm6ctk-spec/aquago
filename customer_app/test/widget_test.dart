@@ -1,21 +1,24 @@
 // اختبار دخان بسيط لتطبيق الزبون: يتحقق أن التطبيق يُبنى على الشاشة
 // الرئيسية، وأن التنقّل عبر الشريط السفلي والـCTA يعمل.
+//
+// يبدأ من `pumpSignedInApp` لا من `AquaGoApp`: الأخير يبدأ الآن بـ`AuthGate`
+// وشاشة الدخول، وهي ليست ما تقيسه هذه الاختبارات.
 
 
+import 'package:customer_app/state/app_state.dart';
 import 'package:flutter/material.dart';
+import 'package:customer_app/core/ui/aqua_map.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:customer_app/main.dart';
+import 'pump_app.dart';
 
 void main() {
 
   testWidgets('يُبنى تطبيق الزبون على الشاشة الرئيسية افتراضيًا', (
     WidgetTester tester,
   ) async {
-    await tester.pumpWidget(const AquaGoApp());
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 300));
+    await pumpSignedInApp(tester);
 
     expect(find.text('مياهك توصلك… بضغطة'), findsOneWidget);
     expect(find.text('اطلب مياه'), findsOneWidget);
@@ -24,9 +27,7 @@ void main() {
   testWidgets('التنقّل من الرئيسية إلى اختيار المياه ثم تأكيد الطلب', (
     WidgetTester tester,
   ) async {
-    await tester.pumpWidget(const AquaGoApp());
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 300));
+    await pumpSignedInApp(tester);
 
     await tester.tap(find.text('اطلب مياه'));
     await tester.pump();
@@ -42,9 +43,7 @@ void main() {
   testWidgets('عدّاد الكمية يظهر لأي منتج يُختار لا للأول وحده', (
     WidgetTester tester,
   ) async {
-    await tester.pumpWidget(const AquaGoApp());
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 300));
+    await pumpSignedInApp(tester);
 
     await tester.tap(find.text('اطلب مياه'));
     await tester.pump();
@@ -74,7 +73,12 @@ void main() {
   testWidgets('شاشة التتبّع تعرض خريطة حقيقية لا عنصرًا نائبًا', (
     WidgetTester tester,
   ) async {
-    await tester.pumpWidget(const AquaGoApp());
+    final state = await pumpSignedInApp(tester);
+
+    // البطاقة لا تُعرض بلا طلب — وهذا مقصود: كانت تظهر لكل زبون ببيانات
+    // ثابتة، بمن فيهم من لم يطلب قطّ. فيُنشأ طلبٌ أولاً ثم يُتتبَّع.
+    state.setActiveOrderForTest(testActiveOrder());
+    state.setScreen(AppScreen.home);
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 300));
 
@@ -93,6 +97,10 @@ void main() {
     // الذي كان مجرّد مستطيل ملوّن يحمل النص "live map view".
     expect(find.byType(FlutterMap), findsOneWidget);
     expect(find.text('live map view'), findsNothing);
-    expect(find.text('على بعد 2.1 كم'), findsOneWidget);
+    // المسافة لم تعد نصّاً ثابتاً («على بعد 2.1 كم» مهما تحرّك السائق):
+    // تصل من الخادم مع `driver:location`. وبلا اتصال في بيئة الاختبار
+    // تُعلَن الحالة بدل عرض رقمٍ مخترَع.
+    expect(find.text('على بعد 2.1 كم'), findsNothing);
+    expect(find.byType(MapBadge), findsOneWidget);
   });
 }

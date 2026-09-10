@@ -5,6 +5,7 @@ import '../core/theme/aqua_colors.dart';
 import '../core/theme/aqua_text.dart';
 import '../core/ui/app_chrome.dart';
 import '../state/app_state.dart';
+import 'address_sheet.dart';
 
 /// شاشة "تأكيد الطلب" — عنوان التسليم، وقت التوصيل (الآن/مجدول)،
 /// ملخّص الطلب والسعر، وطريقة الدفع.
@@ -84,6 +85,7 @@ class _AddressCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final address = context.watch<AppState>().selectedAddress;
     return AquaCard(
       child: Row(
         children: [
@@ -98,12 +100,29 @@ class _AddressCard extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('البيت · خلدا', style: AquaText.arabic(size: 13.5, weight: FontWeight.w700, color: colors.ink)),
-                Text('شارع وصفي التل، بناية 24، طابق 3', style: AquaText.arabic(size: 11.5, color: colors.ink3)),
+                Text(
+                  address?.titleLine ?? 'أضف عنوان التوصيل',
+                  style: AquaText.arabic(size: 13.5, weight: FontWeight.w700, color: colors.ink),
+                ),
+                Text(
+                  address?.details ?? 'لا يمكن إتمام الطلب بلا عنوان',
+                  style: AquaText.arabic(size: 11.5, color: colors.ink3),
+                ),
               ],
             ),
           ),
-          Text('تغيير', style: AquaText.arabic(size: 12.5, weight: FontWeight.w600, color: colors.deep)),
+          // «تغيير» كان نصّاً لا يُضغط — والعنوان لا سبيل إلى تغييره أصلاً.
+          GestureDetector(
+            onTap: () => showAddressSheet(context),
+            behavior: HitTestBehavior.opaque,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
+              child: Text(
+                address == null ? 'إضافة' : 'تغيير',
+                style: AquaText.arabic(size: 12.5, weight: FontWeight.w600, color: colors.deep),
+              ),
+            ),
+          ),
         ],
       ),
     );
@@ -183,7 +202,7 @@ class _OrderSummaryCard extends StatelessWidget {
         children: [
           Text('ملخّص الطلب', style: AquaText.arabic(size: 13, weight: FontWeight.w700, color: colors.ink)),
           const SizedBox(height: 6),
-          line('${state.selectedProduct.name} × ${state.qty}', state.fmt(state.subtotal)),
+          line('${state.selectedBottle?.nameAr ?? 'مياه'} × ${state.qty}', state.fmt(state.subtotal)),
           line('رسوم التوصيل', state.fmt(AppState.deliveryFee)),
           line('خصم أول طلب', state.fmt(AppState.firstOrderDiscount), color: colors.teal),
           Padding(padding: const EdgeInsets.symmetric(vertical: 8), child: DottedDivider(color: colors.line)),

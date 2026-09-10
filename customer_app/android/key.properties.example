@@ -1,0 +1,10 @@
+# نموذج — انسخه إلى `key.properties` (بلا .example) واملأه.
+# الملف الحقيقي لا يُودَع في git أبداً: تحرسه قاعدة `key.properties` في .gitignore.
+#
+# storeFile: مسار مطلق إلى keystore **خارج المستودع**.
+#   على ويندوز استعمل / أو \ لا \ مفرداً — الشرطة المفردة محرف هروب في
+#   ملفات .properties فيضيع المسار صامتاً.
+storeFile=C:/Users/USER/keystores/aquago-customer.jks
+storePassword=
+keyAlias=customer
+keyPassword=

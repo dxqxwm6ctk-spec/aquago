@@ -1,4 +1,4 @@
-package jo.aquago.driver_app
+package jo.aquago.driver
 
 import io.flutter.embedding.android.FlutterActivity
 

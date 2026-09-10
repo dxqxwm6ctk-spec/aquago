@@ -1,10 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:latlong2/latlong.dart';
 import '../core/theme/aqua_theme.dart';
 import '../core/theme/aqua_colors.dart';
 import '../core/theme/aqua_text.dart';
 import '../core/ui/app_chrome.dart';
+import 'package:url_launcher/url_launcher.dart';
+
+import '../core/catalog.dart';
+import '../core/tracking_service.dart';
 import '../core/ui/aqua_map.dart';
 import '../state/app_state.dart';
 
@@ -34,7 +37,10 @@ class TrackScreen extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text('تتبّع الطلب', style: AquaText.arabic(size: 17, weight: FontWeight.w700, color: colors.ink)),
-                      Text(AppState.activeOrderId, style: AquaText.numeric(size: 11.5, color: colors.ink3)),
+                      // رقم الطلب الفعلي لا ثابتاً: كان يُعرض `AQ-1042`
+                      // نفسه مهما طلب الزبون. وبلا طلبٍ لا يُعرض رقم أصلاً.
+                      if (state.activeOrder != null)
+                        Text(state.activeOrder!.id, style: AquaText.numeric(size: 11.5, color: colors.ink3)),
                     ],
                   ),
                 ],
@@ -49,8 +55,18 @@ class TrackScreen extends StatelessWidget {
                     _TrackMap(colors: colors),
                     const SizedBox(height: 16),
                     _StepsCard(state: state, colors: colors),
+                    if (state.tracking.statusNote != null) ...[
+                      const SizedBox(height: 10),
+                      // ملاحظة الخادم مع تغيّر الحالة: «جارٍ البحث عن سائق»،
+                      // «تعذّر إيجاد سائق قريب». الزبون ينتظر بلا كلمة بدونها.
+                      _StatusNote(text: state.tracking.statusNote!, colors: colors),
+                    ],
                     const SizedBox(height: 16),
-                    _DriverCard(colors: colors),
+                    // البطاقة لا تُعرض قبل تعيين سائق: كانت تعرض «محمد
+                    // العتوم» ورقم لوحةٍ ثابتَين منذ لحظة الطلب — فيظنّ
+                    // الزبون أن سائقاً في طريقه ولم يُعيَّن أحد بعد.
+                    if (state.tracking.order?.driverName != null)
+                      _DriverCard(colors: colors, order: state.tracking.order!),
                   ],
                 ),
               ),
@@ -63,34 +79,86 @@ class TrackScreen extends StatelessWidget {
   }
 }
 
-/// خريطة التتبّع الحيّ: موقع السائق ووجهته (عنوان الزبون) وخطّ المسار
-/// بينهما. المواقع ثابتة في هذا العرض؛ عند الربط تأتي من بثّ الموقع
-/// الحيّ للسائق عبر Socket.IO.
+/// خريطة التتبّع الحيّ: موقع السائق الفعلي ووجهته وخطّ المسار بينهما.
+///
+/// الموقع يصل عبر `driver:location` من الخادم. قبل هذا كانت نقطتان ثابتتان
+/// وشارةٌ مكتوبة نصّاً «على بعد 2.1 كم» لا تتغيّر مهما تحرّك السائق — خريطةٌ
+/// تبدو حيّة وهي صورة.
 class _TrackMap extends StatelessWidget {
   const _TrackMap({required this.colors});
   final AquaColors colors;
 
   @override
   Widget build(BuildContext context) {
+    final tracking = context.watch<AppState>().tracking;
+    final driver = tracking.position?.point;
+
+    // الوجهة من عنوان الزبون. موقع السائق يُعرض حين يصل فقط: علامةٌ في
+    // موضعٍ مفترض أسوأ من غيابها — الزبون يصدّقها ويقيس عليها.
+    const destination = AmmanCoords.khalda;
+
     return AquaMap(
       height: 172,
-      center: const LatLng(32.0100, 35.8405), // منتصف الطريق بين الاثنين
+      center: destination,
       zoom: 13.2,
-      route: const [AmmanCoords.sweileh, AmmanCoords.khalda],
+      followPoints: true,
+      route: driver == null ? const [] : [driver, destination],
       markers: [
+        if (driver != null)
+          AquaMapMarker(
+            point: driver,
+            icon: Icons.local_shipping_rounded,
+            color: colors.aqua,
+          ),
         AquaMapMarker(
-          point: AmmanCoords.sweileh,
-          icon: Icons.local_shipping_rounded,
-          color: colors.aqua,
-        ),
-        AquaMapMarker(
-          point: AmmanCoords.khalda,
+          point: destination,
           icon: Icons.home_rounded,
           color: colors.deep,
         ),
       ],
-      overlay: const MapBadge(label: 'على بعد 2.1 كم'),
+      overlay: _TrackBadge(tracking: tracking),
     );
+  }
+}
+
+/// شارة فوق الخريطة: المسافة والوقت المتبقّي، أو حالة القناة حين لا موقع.
+///
+/// الحالة تُعلَن ولا تُبتلع: خريطةٌ ساكنة بلا كلمة تترك الزبون يحدس أهي
+/// محدَّثة أم متجمّدة — وأسوأها أن تعرض آخر موقع وصل إلى الأبد وتبدو صحيحة.
+class _TrackBadge extends StatelessWidget {
+  const _TrackBadge({required this.tracking});
+
+  final TrackingService tracking;
+
+  @override
+  Widget build(BuildContext context) {
+    final position = tracking.position;
+
+    final label = switch (tracking.status) {
+      TrackingStatus.connecting => 'جارٍ الاتصال…',
+      TrackingStatus.waitingForDriver => 'بانتظار موقع السائق',
+      TrackingStatus.disconnected =>
+        position == null ? (tracking.error ?? 'انقطع الاتصال') : 'آخر موقع معروف',
+      TrackingStatus.idle => 'التتبّع غير نشط',
+      TrackingStatus.live => _liveLabel(position!),
+    };
+
+    return MapBadge(label: label);
+  }
+
+  /// «على بعد 2.1 كم · 7 دقائق» — الرقمان من الخادم لا من التطبيق.
+  String _liveLabel(DriverPosition p) {
+    // التقادم يُقال صراحةً: البثّ دوري، فصمتٌ يتجاوز دقيقة يعني انقطاعاً
+    // لم تعلنه القناة بعد (نفق، شبكة ضعيفة).
+    if (tracking.isStale) return 'آخر موقع معروف';
+
+    final parts = <String>[
+      if (p.distanceKm != null) 'على بعد ${p.distanceKm} كم',
+      if (p.etaMinutes != null) '${p.etaMinutes} دقيقة',
+    ];
+    if (parts.isEmpty) return 'السائق في الطريق';
+    // المرور بالمستودع يفسّر طول الوقت رغم قرب المسافة.
+    return '${parts.join(' · ')}${p.viaWarehouse ? ' (عبر المستودع)' : ''}';
   }
 }
 
@@ -103,15 +171,51 @@ class _StepsCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final stages = AppState.trackStages;
     return GestureDetector(
-      onTap: state.advanceTrackStep,
+      // **لا تقدّم يدوي بعد الآن.** كان الضغط يقدّم المرحلة لمحاكاة تقدّم
+      // الطلب حين لم يكن ثمة خادم؛ الآن المرحلة تأتي من حالة الطلب الفعلية،
+      // وضغطةٌ تُقدّمها كانت ستكذب على الزبون بمرحلةٍ لم تحدث.
+      onTap: null,
       child: AquaCard(
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             for (var i = 0; i < stages.length; i++)
-              _StageRow(index: i, stage: stages[i], step: state.step, isLast: i == stages.length - 1, colors: colors),
+              _StageRow(
+                index: i,
+                stage: stages[i],
+                // المرحلة من الطلب حين يصل، ومن الحالة المحلية قبله: بين
+                // الاشتراك وأول قراءة ثوانٍ لا يجوز أن تُعرض فيها المرحلة
+                // الأولى لطلبٍ قد يكون في الطريق أصلاً.
+                step: state.tracking.order?.stageIndex ?? state.step,
+                isLast: i == stages.length - 1,
+                colors: colors,
+              ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+/// ملاحظة الخادم أسفل مؤشّر المراحل.
+class _StatusNote extends StatelessWidget {
+  const _StatusNote({required this.text, required this.colors});
+
+  final String text;
+  final AquaColors colors;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: colors.infoBg,
+        borderRadius: BorderRadius.circular(AquaRadii.sm),
+      ),
+      child: Text(
+        text,
+        style: AquaText.arabic(size: 12.5, color: colors.infoFg, height: 1.5),
       ),
     );
   }
@@ -175,8 +279,20 @@ class _StageRow extends StatelessWidget {
 }
 
 class _DriverCard extends StatelessWidget {
-  const _DriverCard({required this.colors});
+  const _DriverCard({required this.colors, required this.order});
+
   final AquaColors colors;
+  final Order order;
+
+  /// يفتح تطبيق الهاتف على رقم السائق.
+  ///
+  /// الرقم يصل من الخادم مع الطلب بعد التعيين وحده — قبله لا بطاقة أصلاً.
+  Future<void> _call() async {
+    final phone = order.driverPhone;
+    if (phone == null || phone.isEmpty) return;
+    final uri = Uri(scheme: 'tel', path: phone);
+    if (await canLaunchUrl(uri)) await launchUrl(uri);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -195,23 +311,30 @@ class _DriverCard extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('محمد العتوم', style: AquaText.arabic(size: 14, weight: FontWeight.w700, color: Colors.white)),
-                // رقم اللوحة مُحاط بعلامتَي LRI/PDI (U+2066/U+2069) لأن
-                // مقاطعه تُقلَب داخل سياق RTL فيظهر "2718-43". تُكتب
-                // هروبًا لا حرفيًا لتفادي تحذير محارف الاتجاه الخفية.
                 Text(
-                  'سائق Aqua Go · بيك أب \u{2066}43-2718\u{2069}',
+                  order.driverName ?? 'سائق Aqua Go',
+                  style: AquaText.arabic(size: 14, weight: FontWeight.w700, color: Colors.white),
+                ),
+                Text(
+                  'سائق Aqua Go',
                   style: AquaText.arabic(size: 11.5, color: colors.sky200),
                 ),
               ],
             ),
           ),
-          Container(
-            width: 40,
-            height: 40,
-            decoration: BoxDecoration(color: colors.aqua, shape: BoxShape.circle),
-            child: const Icon(Icons.call_rounded, color: Colors.white, size: 18),
-          ),
+          // زرّ الاتصال كان أيقونةً لا تفعل شيئاً — ويُخفى بلا رقم بدل أن
+          // يَعِد باتصالٍ لا يقع.
+          if (order.driverPhone?.isNotEmpty == true)
+            GestureDetector(
+              onTap: _call,
+              behavior: HitTestBehavior.opaque,
+              child: Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(color: colors.aqua, shape: BoxShape.circle),
+                child: const Icon(Icons.call_rounded, color: Colors.white, size: 18),
+              ),
+            ),
         ],
       ),
     );

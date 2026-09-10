@@ -8,7 +8,7 @@
 PRODUCT_NAME = driver_app
 
 // The application's bundle identifier
-PRODUCT_BUNDLE_IDENTIFIER = jo.aquago.driverApp
+PRODUCT_BUNDLE_IDENTIFIER = jo.aquago.driver
 
 // The copyright displayed in application information
 PRODUCT_COPYRIGHT = Copyright © 2026 jo.aquago. All rights reserved.

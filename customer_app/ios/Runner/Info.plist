@@ -49,6 +49,12 @@
 	</dict>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
+	<key>UIBackgroundModes</key>
+	<array>
+		<!-- يسمح للنظام بإيقاظ التطبيق عند وصول إشعار وهو بالخلفية أو
+		     مغلق — وبدونه لا يعمل معالج الخلفية إطلاقاً. -->
+		<string>remote-notification</string>
+	</array>
 	<key>UILaunchStoryboardName</key>
 	<string>LaunchScreen</string>
 	<key>UIMainStoryboardFile</key>
@@ -65,6 +71,21 @@
 		<string>UIInterfaceOrientationPortraitUpsideDown</string>
 		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
+	</array>
+	<!-- مخطط العودة من دخول جوجل: المتصفح يفتح صفحة جوجل ثم يعيد النتيجة
+	     إلى التطبيق عبر هذا المخطط. بدونه يكتمل الدخول في المتصفح ولا يعود
+	     إلى التطبيق أبداً. القيمة هي REVERSED_CLIENT_ID من
+	     GoogleService-Info.plist حرفياً — أي تعديل فيها يكسر العودة. -->
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>com.googleusercontent.apps.276428851477-jrhhudva7dpfvlml7krj3478hrcjr0sp</string>
+			</array>
+		</dict>
 	</array>
 </dict>
 </plist>

@@ -38,7 +38,7 @@ class ProductSelectScreen extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    for (var i = 0; i < AppState.products.length; i++) ...[
+                    for (var i = 0; i < state.bottleTypes.length; i++) ...[
                       if (i > 0) const SizedBox(height: 12),
                       _ProductTile(index: i, state: state, colors: colors),
                     ],
@@ -67,7 +67,7 @@ class _ProductTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final product = AppState.products[index];
+    final product = state.bottleTypes[index];
     final selected = state.product == index;
 
     return GestureDetector(
@@ -96,8 +96,11 @@ class _ProductTile extends StatelessWidget {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(product.name, style: AquaText.arabic(size: 13.5, weight: FontWeight.w700, color: colors.ink)),
-                      Text(product.subtitle, style: AquaText.arabic(size: 11.5, color: colors.ink3)),
+                      Text(product.nameAr, style: AquaText.arabic(size: 13.5, weight: FontWeight.w700, color: colors.ink)),
+                      // الحجم بدل وصفٍ تسويقي: الكتالوج على الخادم لا يحمل
+                      // حقل وصف، ونصٌّ مكتوب هنا يصف منتجاً قد يتغيّر من
+                      // اللوحة — فيصف الوصفُ منتجاً آخر بعد أول تعديل.
+                      Text(product.shortName, style: AquaText.arabic(size: 11.5, color: colors.ink3)),
                     ],
                   ),
                 ),

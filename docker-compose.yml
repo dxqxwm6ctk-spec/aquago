@@ -88,6 +88,9 @@ services:
       TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
       TELEGRAM_ADMIN_CHAT_IDS: ${TELEGRAM_ADMIN_CHAT_IDS:-}
       TELEGRAM_WEBHOOK_SECRET: ${TELEGRAM_WEBHOOK_SECRET:-}
+      # حساب خدمة Firebase (base64) — التحقق من دخول جوجل/آبل وإشعارات FCM.
+      # بدونه يفشل تسجيل الدخول الاجتماعي بـ401 عام.
+      FIREBASE_SERVICE_ACCOUNT_BASE64: ${FIREBASE_SERVICE_ACCOUNT_BASE64:-}
       # صورة postgis المحلية `max_connections` فيها 100 — القيمة هنا
       # مضبوطة لتطابق القاعدة الفعلية لا خطة الإنتاج المستقبلية.
       DB_MAX_CONNECTIONS: ${DB_MAX_CONNECTIONS:-90}

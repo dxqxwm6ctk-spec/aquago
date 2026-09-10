@@ -4,13 +4,17 @@ import {
   Inject,
   Injectable,
   Logger,
+  ServiceUnavailableException,
   UnauthorizedException,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { createHash, randomBytes, randomUUID } from 'crypto';
 import type { User } from '@prisma-v2/client';
 import type Redis from 'ioredis';
-import { FirebaseAdminService } from '../firebase/firebase-admin.service';
+import {
+  FirebaseAdminService,
+  FirebaseNotConfiguredError,
+} from '../firebase/firebase-admin.service';
 import { normalizeJordanPhone, toJordanE164 } from '../common/phone.util';
 import { ReviewAccountService } from '../review-account/review-account.service';
 import { PrismaV2Service } from '../database/prisma-v2.service';
@@ -164,6 +168,34 @@ export class AuthV2Service {
   }
 
   /**
+   * **التحقق من ID token — مع فصل عطل الخادم عن توكن المستخدم.**
+   *
+   * كان `catch` واحد يبتلع السببين ويردّ 401 على كليهما، فبدا الخادمُ غيرُ
+   * المهيَّأ (حساب خدمة غائب) كتوكن مزوَّر: يُقرأ العطل في التطبيق والمزوّد
+   * وموضعه متغيّرُ بيئةٍ فارغ — وهو ما كلّف تشخيصاً طويلاً فعلاً.
+   *
+   * 503 لا 401 لعطل التهيئة: الحالة صحيحة دلالةً (خدمة غير متاحة)، وتمنع
+   * التطبيقَ من مسح توكناته — معالج الـ401 عنده يُنهي الجلسة، فكان عطلٌ
+   * عابر في الخادم يُخرج كل من يفتح التطبيق أثناءه.
+   *
+   * الرسالة للمستخدم تبقى عامة: سببُ العطل الحقيقي يُسجَّل عندنا ولا يُسرَّب
+   * في الرد — نصُّه يصف بنية إعدادنا الداخلية.
+   */
+  private async verifyFirebaseToken(idToken: string, context: string, invalidTokenMessage: string) {
+    try {
+      return await this.firebaseAdmin.auth().verifyIdToken(idToken);
+    } catch (e) {
+      if (e instanceof FirebaseNotConfiguredError) {
+        this.logger.error(`[${context}] تهيئة Firebase مفقودة: ${e.message}`);
+        throw new ServiceUnavailableException(
+          'خدمة الدخول غير متاحة مؤقتاً — حاول بعد قليل',
+        );
+      }
+      throw new UnauthorizedException(invalidTokenMessage);
+    }
+  }
+
+  /**
    * تسجيل الدخول الميداني (زبون/سائق): يتحقق من ID token صادر عن Firebase
    * Phone Auth بعد ما التطبيق أرسل واستقبل رمز الـ SMS مباشرة من Firebase —
    * الخادم لا يرسل ولا يخزّن أي رمز تحقق بنفسه بعد الآن.
@@ -175,12 +207,11 @@ export class AuthV2Service {
     ip: string | undefined,
   ) {
     await this.assertIpNotFlooded('firebase-login', ip);
-    let decoded;
-    try {
-      decoded = await this.firebaseAdmin.auth().verifyIdToken(idToken);
-    } catch {
-      throw new UnauthorizedException('رمز تحقق غير صالح أو منتهي');
-    }
+    const decoded = await this.verifyFirebaseToken(
+      idToken,
+      'firebase-login',
+      'رمز تحقق غير صالح أو منتهي',
+    );
     const rawPhone = decoded.phone_number;
     if (!rawPhone) {
       throw new UnauthorizedException('رمز التحقق لا يحمل رقم هاتف');
@@ -254,14 +285,11 @@ export class AuthV2Service {
     const providerLabel = provider === 'google' ? 'جوجل' : 'آبل';
 
     await this.assertIpNotFlooded(`${provider}-login`, ip);
-    let decoded;
-    try {
-      decoded = await this.firebaseAdmin.auth().verifyIdToken(idToken);
-    } catch {
-      throw new UnauthorizedException(
-        `تعذّر التحقق من حساب ${providerLabel} — أعد المحاولة`,
-      );
-    }
+    const decoded = await this.verifyFirebaseToken(
+      idToken,
+      `${provider}-login`,
+      `تعذّر التحقق من حساب ${providerLabel} — أعد المحاولة`,
+    );
 
     const uid = decoded.uid;
     const email = decoded.email?.trim().toLowerCase() || null;
